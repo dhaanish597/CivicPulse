@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { MapPin, Clock, MessageCircle, Send, Loader2, AlertCircle } from 'lucide-react';
-import { Complaint, ChatMessage } from '../types';
+import { Complaint, ChatMessage, UserLocation } from '../types';
 import {
   detectHotspots,
   getTopHotspotWard,
@@ -11,29 +11,15 @@ import {
   answerQuestion,
 } from '../services';
 import { ForecastChart } from './ForecastChart';
+import { MapView } from './MapView';
+import { categoryColors } from '../data/categoryColors';
 
 interface WardDashboardProps {
   complaints: Complaint[];
+  userLocation?: UserLocation | null;
 }
 
-const categoryColors: Record<string, string> = {
-  'Garbage Overflow': '#E85D4C',
-  'Pothole / Road Damage': '#F2994A',
-  'Water Leakage': '#0E5C56',
-  'Streetlight Outage': '#1F3A5F',
-  'Drainage Blockage': '#4A90A4',
-  'Stray Animal Hazard': '#7B68EE',
-};
-
-const severitySizes: Record<number, string> = {
-  1: 'w-3 h-3',
-  2: 'w-4 h-4',
-  3: 'w-5 h-5',
-  4: 'w-6 h-6',
-  5: 'w-7 h-7',
-};
-
-export const WardDashboard: React.FC<WardDashboardProps> = ({ complaints }) => {
+export const WardDashboard: React.FC<WardDashboardProps> = ({ complaints, userLocation = null }) => {
   const [chatInput, setChatInput] = useState('');
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
@@ -76,18 +62,6 @@ export const WardDashboard: React.FC<WardDashboardProps> = ({ complaints }) => {
     [topWardDailyCounts]
   );
 
-  const mapDots = useMemo(() => {
-    return openComplaints.slice(0, 50).map((c, idx) => ({
-      id: c.id,
-      x: 10 + (idx % 10) * 8 + Math.random() * 4,
-      y: 10 + Math.floor(idx / 10) * 16 + Math.random() * 8,
-      color: categoryColors[c.category] || '#0E5C56',
-      size: severitySizes[c.severity],
-      category: c.category,
-      ward: c.ward,
-    }));
-  }, [openComplaints]);
-
   const handleSendMessage = async () => {
     const question = chatInput.trim();
     if (!question || isChatLoading) return;
@@ -103,12 +77,13 @@ export const WardDashboard: React.FC<WardDashboardProps> = ({ complaints }) => {
     setIsChatLoading(true);
 
     try {
-      const response = await answerQuestion(question, complaints);
+      const response = await answerQuestion(question, complaints, userLocation);
 
       const assistantMessage: ChatMessage = {
         role: 'assistant',
         content: response.answer,
         timestamp: new Date(),
+        toolsUsed: response.toolsUsed,
       };
 
       setChatMessages((prev) => [...prev, assistantMessage]);
@@ -145,35 +120,11 @@ export const WardDashboard: React.FC<WardDashboardProps> = ({ complaints }) => {
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
             <MapPin size={18} className="text-[#0E5C56]" />
-            <h3 className="font-semibold text-gray-800">Hotspot Map</h3>
-            <span className="text-xs text-gray-400 ml-auto">50 recent issues</span>
+            <h3 className="font-semibold text-gray-800">Hyderabad Hotspot Map</h3>
+            <span className="text-xs text-gray-400 ml-auto">{openComplaints.length} open issues</span>
           </div>
-          <div className="relative h-64 bg-gradient-to-br from-gray-50 to-gray-100">
-            <div className="absolute inset-0 p-4">
-              <div className="w-full h-full rounded-lg border-2 border-dashed border-gray-200 relative">
-                {mapDots.map((dot) => (
-                  <div
-                    key={dot.id}
-                    className={`absolute rounded-full shadow-sm transition-transform hover:scale-125 cursor-pointer ${dot.size}`}
-                    style={{
-                      left: `${dot.x}%`,
-                      top: `${dot.y}%`,
-                      backgroundColor: dot.color,
-                      transform: 'translate(-50%, -50%)',
-                    }}
-                    title={`Ward ${dot.ward}: ${dot.category}`}
-                  />
-                ))}
-                <div className="absolute bottom-2 left-2 flex flex-wrap gap-2 text-xs">
-                  {Object.entries(categoryColors).map(([cat, color]) => (
-                    <span key={cat} className="flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
-                      <span className="text-gray-500 hidden sm:inline">{cat.slice(0, 10)}</span>
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
+          <div className="h-80">
+            <MapView complaints={complaints} height="320px" scopedWard={complaints.length ? undefined : topWardInfo.ward} />
           </div>
         </div>
 
@@ -209,7 +160,7 @@ export const WardDashboard: React.FC<WardDashboardProps> = ({ complaints }) => {
                         </span>
                         <span
                           className="text-xs px-2 py-0.5 rounded-full text-white"
-                          style={{ backgroundColor: severitySizes[complaint.severity] ? '#F2994A' : '#4A90A4' }}
+                          style={{ backgroundColor: categoryColors[complaint.category] ?? '#4A90A4' }}
                         >
                           {complaint.category.split(' ')[0]}
                         </span>
@@ -262,6 +213,11 @@ export const WardDashboard: React.FC<WardDashboardProps> = ({ complaints }) => {
                   }`}
                 >
                   {msg.content}
+                  {msg.role === 'assistant' && msg.toolsUsed && msg.toolsUsed.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-gray-200 text-[11px] text-gray-500">
+                      used: {msg.toolsUsed.join(', ')}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

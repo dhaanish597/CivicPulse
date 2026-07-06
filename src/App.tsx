@@ -1,34 +1,101 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Building2 } from 'lucide-react';
-import { Complaint } from './types';
-import { mockComplaints } from './data/mockComplaints';
-import { TabBar } from './components/TabBar';
+import { Complaint, UserLocation } from './types';
+import { Tab, TabBar, TabKey } from './components/TabBar';
 import { ReportIssue } from './components/ReportIssue';
 import { WardDashboard } from './components/WardDashboard';
 import { CityAdmin } from './components/CityAdmin';
+import { RoleSelect } from './components/RoleSelect';
+import { RoleProvider, RoleSession, useRole } from './context/RoleContext';
+import { fetchComplaints } from './services';
 
-type TabKey = 'report' | 'ward' | 'admin';
+const allTabs: Tab[] = [
+  { key: 'report', label: 'Report an Issue' },
+  { key: 'ward', label: 'Ward Dashboard' },
+  { key: 'admin', label: 'City Admin' },
+];
 
 function App() {
+  return (
+    <RoleProvider>
+      <AppShell />
+    </RoleProvider>
+  );
+}
+
+function AppShell() {
+  const { roleSession, setRoleSession, resetRole } = useRole();
   const [activeTab, setActiveTab] = useState<TabKey>('ward');
-  const [complaints, setComplaints] = useState<Complaint[]>(mockComplaints);
+  const [complaints, setComplaints] = useState<Complaint[]>([]);
+  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
+  const [isLoadingComplaints, setIsLoadingComplaints] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    if (!roleSession) return;
+
+    let isMounted = true;
+    const params = roleSession.role === 'officer' && roleSession.ward
+      ? { ward: roleSession.ward }
+      : {};
+
+    setIsLoadingComplaints(true);
+    fetchComplaints(params)
+      .then((data) => {
+        if (!isMounted) return;
+        setComplaints(data);
+        setLoadError('');
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setLoadError('Unable to load complaints from the shared backend.');
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingComplaints(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [roleSession]);
 
   const handleNewComplaint = (complaint: Complaint) => {
-    setComplaints((prev) => [complaint, ...prev]);
+    setComplaints((prev) => (
+      prev.some((item) => item.id === complaint.id)
+        ? prev.map((item) => (item.id === complaint.id ? complaint : item))
+        : [complaint, ...prev]
+    ));
   };
 
   const renderContent = () => {
     switch (activeTab) {
       case 'report':
-        return <ReportIssue onSubmit={handleNewComplaint} />;
+        return (
+          <ReportIssue
+            onSubmit={handleNewComplaint}
+            userLocation={userLocation}
+            onLocationChange={setUserLocation}
+          />
+        );
       case 'ward':
-        return <WardDashboard complaints={complaints} />;
+        return <WardDashboard complaints={complaints} userLocation={userLocation} />;
       case 'admin':
         return <CityAdmin complaints={complaints} />;
       default:
         return null;
     }
   };
+
+  const handleRoleSelect = (session: RoleSession) => {
+    setRoleSession(session);
+    setActiveTab(defaultTabForRole(session.role));
+  };
+
+  if (!roleSession) {
+    return <RoleSelect onSelect={handleRoleSelect} />;
+  }
+
+  const visibleTabs = tabsForRole(roleSession.role);
 
   return (
     <div className="min-h-screen bg-[#FAFBFB]">
@@ -46,18 +113,39 @@ function App() {
             </div>
             <div className="flex items-center gap-4">
               <div className="text-right">
-                <p className="text-sm font-medium text-gray-700">City Operations</p>
+                <p className="text-sm font-medium text-gray-700">
+                  {roleLabel(roleSession)}
+                </p>
                 <p className="text-xs text-gray-500">{complaints.length} complaints tracked</p>
               </div>
+              <button
+                type="button"
+                onClick={resetRole}
+                className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50"
+              >
+                Switch Role
+              </button>
             </div>
           </div>
         </div>
       </header>
 
-      <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
+      <TabBar activeTab={activeTab} onTabChange={setActiveTab} tabs={visibleTabs} />
 
       <main>
-        {renderContent()}
+        {isLoadingComplaints ? (
+          <div className="max-w-7xl mx-auto px-4 py-12 text-center text-gray-500">
+            Loading shared complaint data...
+          </div>
+        ) : loadError ? (
+          <div className="max-w-7xl mx-auto px-4 py-12">
+            <div className="bg-red-50 border border-red-100 text-red-700 rounded-xl p-4">
+              {loadError}
+            </div>
+          </div>
+        ) : (
+          renderContent()
+        )}
       </main>
 
       <footer className="bg-white border-t border-gray-200 mt-8 py-6">
@@ -67,7 +155,7 @@ function App() {
               CivicPulse - Municipal Civic Operations Intelligence
             </div>
             <div className="flex items-center gap-6 text-sm text-gray-400">
-              <span>Wards: 12</span>
+              <span>Wards: 20</span>
               <span>Categories: 6</span>
               <span>Sources: 3</span>
             </div>
@@ -76,6 +164,24 @@ function App() {
       </footer>
     </div>
   );
+}
+
+function tabsForRole(role: RoleSession['role']): Tab[] {
+  if (role === 'citizen') return allTabs.filter((tab) => tab.key === 'report');
+  if (role === 'officer') return allTabs.filter((tab) => tab.key === 'ward');
+  return allTabs;
+}
+
+function defaultTabForRole(role: RoleSession['role']): TabKey {
+  if (role === 'citizen') return 'report';
+  if (role === 'officer') return 'ward';
+  return 'admin';
+}
+
+function roleLabel(session: RoleSession): string {
+  if (session.role === 'citizen') return `${session.name} · Citizen`;
+  if (session.role === 'officer') return `${session.name} · Ward ${session.ward} Officer`;
+  return `${session.name} · City Admin`;
 }
 
 export default App;

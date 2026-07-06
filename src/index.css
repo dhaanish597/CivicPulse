@@ -32,6 +32,35 @@ body {
   animation: slide-up 0.3s ease-out;
 }
 
+.complaint-marker {
+  background: transparent;
+  border: 0;
+}
+
+.complaint-marker span {
+  display: block;
+  border: 2px solid #ffffff;
+  border-radius: 9999px;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.24);
+}
+
+.complaint-marker.severity-4 span,
+.complaint-marker.severity-5 span {
+  animation: marker-pulse 1.5s ease-out infinite;
+}
+
+@keyframes marker-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgb(232 93 76 / 0.45), 0 4px 12px rgb(0 0 0 / 0.24);
+  }
+  70% {
+    box-shadow: 0 0 0 12px rgb(232 93 76 / 0), 0 4px 12px rgb(0 0 0 / 0.24);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgb(232 93 76 / 0), 0 4px 12px rgb(0 0 0 / 0.24);
+  }
+}
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;

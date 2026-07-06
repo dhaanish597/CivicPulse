@@ -4,6 +4,7 @@ import { Complaint } from '../types';
 import { detectHotspots, getTopHotspotWard, computeDailyCounts, forecastNext7Days } from '../services';
 import { KPICard } from './KPICard';
 import { HotspotBarChart } from './HotspotBarChart';
+import { MapView } from './MapView';
 
 interface CityAdminProps {
   complaints: Complaint[];
@@ -81,7 +82,7 @@ export const CityAdmin: React.FC<CityAdminProps> = ({ complaints }) => {
         <KPICard
           title="Wards Monitored"
           value={wardsMonitored}
-          subtitle="of 12 city wards"
+          subtitle="of 20 city wards"
           icon="map"
           accentColor="#1F3A5F"
         />
@@ -155,6 +156,15 @@ export const CityAdmin: React.FC<CityAdminProps> = ({ complaints }) => {
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
+          <Calendar size={20} className="text-[#0E5C56]" />
+          <h3 className="font-semibold text-gray-800">Citywide Complaint Map</h3>
+          <span className="text-xs text-gray-400 ml-auto">Open complaints and 30-day ward intensity</span>
+        </div>
+        <MapView complaints={complaints} height="360px" />
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">

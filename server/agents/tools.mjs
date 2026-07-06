@@ -1,0 +1,109 @@
+import {
+  buildDispatchList,
+  buildWardSummary,
+  computeDailyCounts,
+  detectHotspots,
+  forecastNext7Days,
+  getNearbyIssues,
+} from '../analytics.mjs';
+import { listComplaints } from '../db.mjs';
+
+export const toolDeclarations = [
+  {
+    name: 'get_nearby_issues',
+    description: 'Find open civic complaints near a latitude/longitude point, sorted nearest first.',
+    parameters: {
+      type: 'object',
+      properties: {
+        lat: { type: 'number', description: 'Latitude of the user or point of interest.' },
+        lng: { type: 'number', description: 'Longitude of the user or point of interest.' },
+        radius_km: { type: 'number', description: 'Search radius in kilometers. Default 2.' },
+      },
+      required: ['lat', 'lng'],
+    },
+  },
+  {
+    name: 'get_ward_summary',
+    description: 'Get complaint counts by category and average severity for a ward.',
+    parameters: {
+      type: 'object',
+      properties: {
+        ward: { type: 'number', description: 'Ward number from 1 to 20.' },
+      },
+      required: ['ward'],
+    },
+  },
+  {
+    name: 'get_hotspots',
+    description: 'Get top citywide 30-day ward/category hotspots.',
+    parameters: {
+      type: 'object',
+      properties: {
+        limit: { type: 'number', description: 'Maximum hotspots to return. Default 5.' },
+      },
+    },
+  },
+  {
+    name: 'get_forecast',
+    description: 'Get a 7-day complaint forecast for a ward.',
+    parameters: {
+      type: 'object',
+      properties: {
+        ward: { type: 'number', description: 'Ward number from 1 to 20.' },
+      },
+      required: ['ward'],
+    },
+  },
+  {
+    name: 'get_dispatch_list',
+    description: 'Get urgency-ranked open complaints for dispatch planning.',
+    parameters: {
+      type: 'object',
+      properties: {
+        ward: { type: 'number', description: 'Optional ward number from 1 to 20.' },
+        limit: { type: 'number', description: 'Maximum complaints to return. Default 5.' },
+      },
+    },
+  },
+];
+
+export async function executeTool(name, args = {}) {
+  switch (name) {
+    case 'get_nearby_issues':
+      return getNearbyIssues(
+        listComplaints(),
+        Number(args.lat),
+        Number(args.lng),
+        Number(args.radius_km) || 2,
+      ).slice(0, 10);
+
+    case 'get_ward_summary':
+      return buildWardSummary(listComplaints({ ward: args.ward }), Number(args.ward));
+
+    case 'get_hotspots':
+      return detectHotspots(listComplaints(), 30).slice(0, Number(args.limit) || 5);
+
+    case 'get_forecast': {
+      const ward = Number(args.ward);
+      const complaints = listComplaints({ ward });
+      const dailyCounts = computeDailyCounts(complaints.map((complaint) => complaint.reportedAt));
+      return {
+        ward,
+        historicalData: dailyCounts,
+        forecast: forecastNext7Days(dailyCounts.map((day) => day.count)),
+      };
+    }
+
+    case 'get_dispatch_list':
+      return buildDispatchList(
+        listComplaints(args.ward ? { ward: args.ward } : {}),
+        Number(args.limit) || 5,
+      );
+
+    default: {
+      const error = new Error(`Unknown tool: ${name}`);
+      error.status = 400;
+      throw error;
+    }
+  }
+}

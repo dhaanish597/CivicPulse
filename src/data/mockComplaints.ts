@@ -1,4 +1,5 @@
 import { Complaint, Category, Source } from '../types';
+import { getLocalityByWard, hyderabadLocalities } from './hyderabadLocalities';
 
 const categories: Category[] = [
   'Garbage Overflow',
@@ -9,25 +10,7 @@ const categories: Category[] = [
   'Stray Animal Hazard',
 ];
 
-const sources: Source[] = ['Citizen App', 'WhatsApp', 'Call Center'];
-
-const wardAddresses: Record<number, string> = {
-  1: 'Hill View Colony, Ward 1',
-  2: 'Lake Gardens, Ward 2',
-  3: 'Industrial Area, Ward 3',
-  4: 'Green Park Extension, Ward 4',
-  5: 'Old City Market, Ward 5',
-  6: 'Riverside Heights, Ward 6',
-  7: 'Tech Park Layout, Ward 7',
-  8: 'Central Transit Hub, Ward 8',
-  9: 'University Campus Area, Ward 9',
-  10: 'Sports Complex Zone, Ward 10',
-  11: 'Residential Sector East, Ward 11',
-  12: 'Harbor Approach Road, Ward 12',
-};
-
-const BASE_LAT = 12.9716;
-const BASE_LNG = 77.5946;
+const sources: Source[] = ['Citizen App', 'Telegram', 'Call Center'];
 
 function generateId(): string {
   return `CMP-${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 5)}`.toUpperCase();
@@ -45,7 +28,7 @@ function randomSeverity(): 1 | 2 | 3 | 4 | 5 {
 }
 
 function randomWard(): number {
-  return Math.floor(Math.random() * 12) + 1;
+  return Math.floor(Math.random() * hyderabadLocalities.length) + 1;
 }
 
 function randomCategory(): Category {
@@ -65,12 +48,13 @@ function randomDaysAgo(maxDays: number, skewRecent: boolean = true): number {
   return Math.floor(r * maxDays);
 }
 
-function jitterCoord(): { lat: number; lng: number } {
-  const latJitter = (Math.random() - 0.5) * 0.08;
-  const lngJitter = (Math.random() - 0.5) * 0.08;
+function jitterCoord(ward: number): { lat: number; lng: number } {
+  const locality = getLocalityByWard(ward);
+  const latJitter = (Math.random() - 0.5) * 0.01;
+  const lngJitter = (Math.random() - 0.5) * 0.01;
   return {
-    lat: parseFloat((BASE_LAT + latJitter).toFixed(6)),
-    lng: parseFloat((BASE_LNG + lngJitter).toFixed(6)),
+    lat: parseFloat((locality.lat + latJitter).toFixed(6)),
+    lng: parseFloat((locality.lng + lngJitter).toFixed(6)),
   };
 }
 
@@ -94,11 +78,13 @@ export function generateMockComplaints(count: number = 300): Complaint[] {
 
     const ward = randomWard();
     const category = randomCategory();
-    const coords = jitterCoord();
+    const locality = getLocalityByWard(ward);
+    const coords = jitterCoord(ward);
 
     complaints.push({
       id: generateId(),
       ward,
+      locality: locality.locality,
       category,
       severity: randomSeverity(),
       reportedAt,
@@ -107,7 +93,7 @@ export function generateMockComplaints(count: number = 300): Complaint[] {
       lat: coords.lat,
       lng: coords.lng,
       source: randomSource(),
-      address: wardAddresses[ward],
+      address: locality.locality,
     });
   }
 
@@ -126,11 +112,13 @@ export function generateMockComplaints(count: number = 300): Complaint[] {
       daysOpen = daysAgo + 1;
     }
 
-    const coords = jitterCoord();
+    const locality = getLocalityByWard(8);
+    const coords = jitterCoord(8);
 
     complaints.push({
       id: generateId(),
       ward: 8,
+      locality: locality.locality,
       category: 'Garbage Overflow',
       severity: (Math.floor(Math.random() * 3) + 3) as 3 | 4 | 5,
       reportedAt,
@@ -139,7 +127,7 @@ export function generateMockComplaints(count: number = 300): Complaint[] {
       lat: coords.lat,
       lng: coords.lng,
       source: randomSource(),
-      address: wardAddresses[8],
+      address: locality.locality,
     });
   }
 

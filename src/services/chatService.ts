@@ -4,13 +4,18 @@ import { scoreUrgency, computeRecurrenceCounts } from './urgencyService';
 
 export interface ChatAnswerResult {
   answer: string;
+  toolsUsed?: string[];
   fallback?: boolean;
   error?: string;
 }
 
 const API_TIMEOUT_MS = 20000;
 
-export async function answerQuestion(question: string, complaints: Complaint[]): Promise<ChatAnswerResult> {
+export async function answerQuestion(
+  question: string,
+  complaints: Complaint[],
+  location?: { lat: number; lng: number } | null
+): Promise<ChatAnswerResult> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
 
@@ -21,7 +26,8 @@ export async function answerQuestion(question: string, complaints: Complaint[]):
       signal: controller.signal,
       body: JSON.stringify({
         question,
-        summary: buildComplaintSummary(complaints),
+        lat: location?.lat,
+        lng: location?.lng,
       }),
     });
 
@@ -35,7 +41,10 @@ export async function answerQuestion(question: string, complaints: Complaint[]):
       throw new Error('Chat API returned an empty answer.');
     }
 
-    return { answer: data.answer };
+    return {
+      answer: data.answer,
+      toolsUsed: Array.isArray(data.toolsUsed) ? data.toolsUsed.map(String) : [],
+    };
   } catch (error) {
     console.warn('Gemini chat failed; using local fallback.', error);
     return {
@@ -48,94 +57,6 @@ export async function answerQuestion(question: string, complaints: Complaint[]):
   }
 }
 
-function buildComplaintSummary(complaints: Complaint[]) {
-  const categoryMap = new Map<string, { total: number; open: number; severity: number; daysOpen: number }>();
-  const wardMap = new Map<number, { total: number; open: number; severity: number; daysOpen: number; categories: Map<string, { total: number; open: number; severity: number }> }>();
-  const resolvedComplaints = complaints.filter((c) => c.resolved);
-  const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - 30);
-
-  complaints.forEach((complaint) => {
-    const categoryStats = categoryMap.get(complaint.category) ?? {
-      total: 0,
-      open: 0,
-      severity: 0,
-      daysOpen: 0,
-    };
-    categoryStats.total += 1;
-    categoryStats.open += complaint.resolved ? 0 : 1;
-    categoryStats.severity += complaint.severity;
-    categoryStats.daysOpen += complaint.daysOpen;
-    categoryMap.set(complaint.category, categoryStats);
-
-    const wardStats = wardMap.get(complaint.ward) ?? {
-      total: 0,
-      open: 0,
-      severity: 0,
-      daysOpen: 0,
-      categories: new Map(),
-    };
-    wardStats.total += 1;
-    wardStats.open += complaint.resolved ? 0 : 1;
-    wardStats.severity += complaint.severity;
-    wardStats.daysOpen += complaint.daysOpen;
-
-    const wardCategoryStats = wardStats.categories.get(complaint.category) ?? {
-      total: 0,
-      open: 0,
-      severity: 0,
-    };
-    wardCategoryStats.total += 1;
-    wardCategoryStats.open += complaint.resolved ? 0 : 1;
-    wardCategoryStats.severity += complaint.severity;
-    wardStats.categories.set(complaint.category, wardCategoryStats);
-    wardMap.set(complaint.ward, wardStats);
-  });
-
-  const openComplaints = complaints.length - resolvedComplaints.length;
-
-  return {
-    totalComplaints: complaints.length,
-    openComplaints,
-    resolvedComplaints: resolvedComplaints.length,
-    resolutionRatePct: complaints.length === 0 ? 0 : round((resolvedComplaints.length / complaints.length) * 100),
-    avgDaysToResolve: avg(resolvedComplaints.map((c) => c.daysOpen)),
-    last30Days: {
-      totalComplaints: complaints.filter((c) => c.reportedAt >= cutoffDate).length,
-      hotspots: detectHotspots(complaints, 30).slice(0, 8),
-    },
-    categories: Array.from(categoryMap.entries())
-      .map(([category, stats]) => ({
-        category,
-        total: stats.total,
-        open: stats.open,
-        resolved: stats.total - stats.open,
-        avgSeverity: round(stats.severity / stats.total),
-        avgDaysOpen: round(stats.daysOpen / stats.total),
-      }))
-      .sort((a, b) => b.total - a.total),
-    wards: Array.from(wardMap.entries())
-      .map(([ward, stats]) => ({
-        ward,
-        total: stats.total,
-        open: stats.open,
-        resolved: stats.total - stats.open,
-        avgSeverity: round(stats.severity / stats.total),
-        avgDaysOpen: round(stats.daysOpen / stats.total),
-        categories: Array.from(stats.categories.entries())
-          .map(([category, categoryStats]) => ({
-            category,
-            total: categoryStats.total,
-            open: categoryStats.open,
-            resolved: categoryStats.total - categoryStats.open,
-            avgSeverity: round(categoryStats.severity / categoryStats.total),
-          }))
-          .sort((a, b) => b.total - a.total),
-      }))
-      .sort((a, b) => a.ward - b.ward),
-  };
-}
-
 async function readError(response: Response): Promise<string> {
   try {
     const data = await response.json();
@@ -143,15 +64,6 @@ async function readError(response: Response): Promise<string> {
   } catch {
     return response.statusText;
   }
-}
-
-function avg(values: number[]): number {
-  if (values.length === 0) return 0;
-  return round(values.reduce((sum, value) => sum + value, 0) / values.length);
-}
-
-function round(value: number): number {
-  return Number(value.toFixed(2));
 }
 
 function mockAnswerQuestion(question: string, complaints: Complaint[]): string {

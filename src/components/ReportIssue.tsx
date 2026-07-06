@@ -1,27 +1,23 @@
 import React, { useState, useRef } from 'react';
-import { Upload, Camera, MapPin, CheckCircle, AlertCircle, FileText } from 'lucide-react';
-import { Complaint } from '../types';
-import { classifyComplaint, ClassificationResult } from '../services/classificationService';
+import { Upload, MapPin, CheckCircle, AlertCircle, FileText } from 'lucide-react';
+import { AgentTrace, Complaint, UserLocation } from '../types';
+import { createComplaint } from '../services';
+import { AgentActivityPanel } from './AgentActivityPanel';
+import { NearMePanel } from './NearMePanel';
 
 interface ReportIssueProps {
   onSubmit: (complaint: Complaint) => void;
+  userLocation: UserLocation | null;
+  onLocationChange: (location: UserLocation) => void;
 }
 
-const categoryDescriptions: Partial<Record<string, string>> = {
-  'Garbage Overflow': 'Waste management issue requiring cleanup',
-  'Pothole / Road Damage': 'Infrastructure damage affecting traffic',
-  'Water Leakage': 'Water infrastructure problem',
-  'Streetlight Outage': 'Public lighting issue',
-  'Drainage Blockage': 'Drainage system blockage',
-  'Stray Animal Hazard': 'Animal-related public safety concern',
-};
-
-export const ReportIssue: React.FC<ReportIssueProps> = ({ onSubmit }) => {
+export const ReportIssue: React.FC<ReportIssueProps> = ({ onSubmit, userLocation, onLocationChange }) => {
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [textNote, setTextNote] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [classification, setClassification] = useState<ClassificationResult | null>(null);
+  const [agentTrace, setAgentTrace] = useState<AgentTrace[]>([]);
+  const [recommendation, setRecommendation] = useState('');
   const [showSuccess, setShowSuccess] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [dragActive, setDragActive] = useState(false);
@@ -56,22 +52,8 @@ export const ReportIssue: React.FC<ReportIssueProps> = ({ onSubmit }) => {
         setPhotoPreview(e.target?.result as string);
       };
       reader.readAsDataURL(file);
-      setClassification(null);
-    }
-  };
-
-  const handleClassify = async () => {
-    setIsSubmitting(true);
-    try {
-      const result = await classifyComplaint(photoFile, textNote);
-      setClassification(result);
-      if (result.fallback && result.error) {
-        showErrorToast(result.error);
-      }
-    } catch {
-      showErrorToast('Unable to classify this report right now. Please try again.');
-    } finally {
-      setIsSubmitting(false);
+      setAgentTrace([]);
+      setRecommendation('');
     }
   };
 
@@ -83,41 +65,43 @@ export const ReportIssue: React.FC<ReportIssueProps> = ({ onSubmit }) => {
     errorTimeoutRef.current = window.setTimeout(() => setErrorMessage(''), 5000);
   };
 
-  const handleSubmit = () => {
-    if (!classification) return;
+  const handleSubmit = async () => {
+    if (isSubmitting || (!photoFile && !textNote.trim())) return;
 
-    const complaint: Complaint = {
-      id: `CMP-${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 5)}`.toUpperCase(),
-      ward: Math.floor(Math.random() * 12) + 1,
-      category: classification.category,
-      severity: classification.severity,
-      reportedAt: new Date(),
-      resolved: false,
-      daysOpen: 1,
-      lat: 12.9716 + (Math.random() - 0.5) * 0.08,
-      lng: 77.5946 + (Math.random() - 0.5) * 0.08,
-      source: 'Citizen App',
-      address: 'Central Transit Hub, Ward 8',
-      description: textNote,
-    };
+    setIsSubmitting(true);
+    setAgentTrace([]);
+    setRecommendation('');
+    try {
+      const result = await createComplaint({
+        textNote,
+        photoFile,
+        ward: userLocation?.ward ?? 8,
+        locality: userLocation?.locality ?? 'Ameerpet',
+        lat: userLocation?.lat,
+        lng: userLocation?.lng,
+        source: 'Citizen App',
+      });
 
-    onSubmit(complaint);
-    setShowSuccess(true);
+      setAgentTrace(result.trace);
+      setRecommendation(result.recommendation ?? '');
+      onSubmit(result.complaint);
+      setShowSuccess(true);
 
-    setTimeout(() => {
-      setShowSuccess(false);
-      setPhotoFile(null);
-      setPhotoPreview(null);
-      setTextNote('');
-      setClassification(null);
-    }, 3000);
+      setTimeout(() => {
+        setShowSuccess(false);
+        setPhotoFile(null);
+        setPhotoPreview(null);
+        setTextNote('');
+      }, 3000);
+    } catch {
+      showErrorToast('Unable to submit this report to the shared backend.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const severityColors = ['#22C55E', '#84CC16', '#EAB308', '#F97316', '#E85D4C'];
-  const severityLabels = ['Low', 'Low-Medium', 'Medium', 'Medium-High', 'High'];
-
   return (
-    <div className="max-w-2xl mx-auto px-4 py-8">
+    <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="bg-[#0E5C56] px-6 py-4">
           <h2 className="text-xl font-semibold text-white">Report a Civic Issue</h2>
@@ -155,7 +139,8 @@ export const ReportIssue: React.FC<ReportIssueProps> = ({ onSubmit }) => {
                   onClick={() => {
                     setPhotoFile(null);
                     setPhotoPreview(null);
-                    setClassification(null);
+                    setAgentTrace([]);
+                    setRecommendation('');
                   }}
                   className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
                 >
@@ -191,7 +176,8 @@ export const ReportIssue: React.FC<ReportIssueProps> = ({ onSubmit }) => {
               value={textNote}
               onChange={(e) => {
                 setTextNote(e.target.value);
-                setClassification(null);
+                setAgentTrace([]);
+                setRecommendation('');
               }}
               placeholder="Describe the issue (e.g., 'Large pothole near the intersection causing traffic delays')"
               className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0E5C56] focus:border-transparent resize-none"
@@ -203,77 +189,41 @@ export const ReportIssue: React.FC<ReportIssueProps> = ({ onSubmit }) => {
             <MapPin size={20} className="text-[#0E5C56]" />
             <div>
               <p className="text-sm font-medium text-gray-700">Location Detected</p>
-              <p className="text-xs text-gray-500">Central Transit Hub, Ward 8</p>
+              <p className="text-xs text-gray-500">
+                {userLocation?.label ?? 'Ameerpet, Ward 8'}
+              </p>
             </div>
           </div>
 
-          {classification && (
-            <div className="bg-teal-50 border border-teal-100 rounded-xl p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <CheckCircle size={20} className="text-[#0E5C56]" />
-                <span className="font-medium text-[#0E5C56]">Issue Classified</span>
-              </div>
-              <div className="flex flex-wrap gap-3">
-                <span className="px-3 py-1.5 bg-white rounded-full text-sm font-medium border border-gray-200">
-                  {classification.category}
-                </span>
-                <span
-                  className="px-3 py-1.5 rounded-full text-sm font-medium text-white"
-                  style={{ backgroundColor: severityColors[classification.severity - 1] }}
-                >
-                  Severity: {severityLabels[classification.severity - 1]}
-                </span>
-              </div>
-              {categoryDescriptions[classification.category] && (
-                <p className="text-xs text-gray-500 mt-3">
-                  {categoryDescriptions[classification.category]}
-                </p>
-              )}
-              {classification.reasoning && !classification.fallback && (
-                <p className="text-xs text-gray-500 mt-2">
-                  Gemini reasoning: {classification.reasoning}
-                </p>
-              )}
-            </div>
-          )}
-
           <div className="flex gap-3">
-            {!classification ? (
-              <button
-                onClick={handleClassify}
-                disabled={isSubmitting || (!photoFile && !textNote.trim())}
-                className={`flex-1 py-3 px-6 rounded-lg font-medium transition-all ${
-                  isSubmitting || (!photoFile && !textNote.trim())
-                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                    : 'bg-[#0E5C56] text-white hover:bg-[#0a4a45] shadow-sm'
-                }`}
-              >
-                {isSubmitting ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                    Analyzing...
-                  </span>
-                ) : (
-                  <span className="flex items-center justify-center gap-2">
-                    <Camera size={18} />
-                    Analyze & Classify Issue
-                  </span>
-                )}
-              </button>
-            ) : (
-              <button
-                onClick={handleSubmit}
-                className="flex-1 py-3 px-6 bg-[#E85D4C] text-white rounded-lg font-medium hover:bg-[#d54d3c] transition-colors shadow-sm"
-              >
-                Submit Report
-              </button>
-            )}
+            <button
+              onClick={handleSubmit}
+              disabled={isSubmitting || (!photoFile && !textNote.trim())}
+              className={`flex-1 py-3 px-6 rounded-lg font-medium transition-all ${
+                isSubmitting || (!photoFile && !textNote.trim())
+                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                  : 'bg-[#0E5C56] text-white hover:bg-[#0a4a45] shadow-sm'
+              }`}
+            >
+              {isSubmitting ? (
+                <span className="flex items-center justify-center gap-2">
+                  <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  Running agent pipeline...
+                </span>
+              ) : (
+                'Submit Report'
+              )}
+            </button>
           </div>
         </div>
       </div>
+
+      <NearMePanel onLocationChange={onLocationChange} />
+
+      <AgentActivityPanel trace={agentTrace} isRunning={isSubmitting} recommendation={recommendation} />
 
       {showSuccess && (
         <div className="fixed bottom-8 right-8 bg-[#0E5C56] text-white px-6 py-4 rounded-xl shadow-lg flex items-center gap-3 animate-slide-up">

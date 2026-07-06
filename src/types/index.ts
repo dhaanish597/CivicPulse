@@ -6,11 +6,12 @@ export type Category =
   | 'Drainage Blockage'
   | 'Stray Animal Hazard';
 
-export type Source = 'Citizen App' | 'WhatsApp' | 'Call Center';
+export type Source = 'Citizen App' | 'Telegram' | 'Call Center';
 
 export interface Complaint {
   id: string;
   ward: number;
+  locality: string;
   category: Category;
   severity: 1 | 2 | 3 | 4 | 5;
   reportedAt: Date;
@@ -21,6 +22,9 @@ export interface Complaint {
   source: Source;
   address: string;
   description?: string;
+  reasoning?: string;
+  distanceKm?: number;
+  urgency?: number;
 }
 
 export interface HotspotGroup {
@@ -39,4 +43,23 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  toolsUsed?: string[];
+}
+
+export interface AgentTrace {
+  id: string;
+  complaintId: string;
+  stepName: string;
+  stepOrder: number;
+  detail: string;
+  createdAt: Date;
+}
+
+export interface UserLocation {
+  lat: number;
+  lng: number;
+  ward?: number;
+  locality?: string;
+  label: string;
+  source: 'geolocation' | 'manual';
 }
