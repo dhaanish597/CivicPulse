@@ -36,7 +36,7 @@ export const HotspotBarChart: React.FC<HotspotBarChartProps> = ({ hotspots, topN
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-      <h3 className="text-lg font-semibold text-gray-800 mb-4">Top Hotspots (Last 30 Days)</h3>
+      <h3 className="text-lg font-semibold text-brand-navy mb-4">Top Hotspots (Last 30 Days)</h3>
       <div className="h-80">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart

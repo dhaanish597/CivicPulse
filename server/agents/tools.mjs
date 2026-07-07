@@ -6,7 +6,7 @@ import {
   forecastNext7Days,
   getNearbyIssues,
 } from '../analytics.mjs';
-import { listComplaints } from '../db.mjs';
+import { listComplaints, getComplaintById, listStatusEvents } from '../db.mjs';
 
 export const toolDeclarations = [
   {
@@ -65,6 +65,29 @@ export const toolDeclarations = [
       },
     },
   },
+  {
+    name: 'get_report_status',
+    description: 'Get the current status, timeline, and AI lead for a specific complaint.',
+    parameters: {
+      type: 'object',
+      properties: {
+        complaint_id: { type: 'string', description: 'The CMP-XXXX ID of the complaint.' },
+      },
+      required: ['complaint_id'],
+    },
+  },
+  {
+    name: 'check_route',
+    description: 'Check a route between two localities for active complaint hazards and hotspots. Returns an advisory, risk score, and flagged issues.',
+    parameters: {
+      type: 'object',
+      properties: {
+        origin: { type: 'string', description: 'Origin locality name (e.g. Gachibowli) or "my_location"' },
+        destination: { type: 'string', description: 'Destination locality name (e.g. Secunderabad)' },
+      },
+      required: ['origin', 'destination'],
+    },
+  },
 ];
 
 export async function executeTool(name, args = {}) {
@@ -99,6 +122,42 @@ export async function executeTool(name, args = {}) {
         listComplaints(args.ward ? { ward: args.ward } : {}),
         Number(args.limit) || 5,
       );
+
+    case 'get_report_status': {
+      const complaint = getComplaintById(args.complaint_id);
+      if (!complaint) return { error: `Complaint ${args.complaint_id} not found.` };
+      const events = listStatusEvents(args.complaint_id);
+      return { 
+        id: complaint.id, 
+        status: complaint.status, 
+        lead: complaint.lead, 
+        timeline: events.map(e => ({ status: e.status, actor: e.actor, date: e.createdAt })) 
+      };
+    }
+
+    case 'check_route': {
+      const { runRouteAdvisor } = await import('./routeAgent.mjs');
+      const { getLocalityByName } = await import('../data/localities.mjs');
+      
+      let oLat = args._userLat, oLng = args._userLng;
+      if (args.origin && args.origin !== 'my_location') {
+        const oLoc = getLocalityByName(args.origin);
+        if (oLoc) { oLat = oLoc.lat; oLng = oLoc.lng; }
+      }
+      if (!oLat || !oLng) return { error: `Could not resolve origin location: ${args.origin}` };
+
+      let dLat, dLng;
+      const dLoc = getLocalityByName(args.destination);
+      if (dLoc) { dLat = dLoc.lat; dLng = dLoc.lng; }
+      if (!dLat || !dLng) return { error: `Could not resolve destination location: ${args.destination}` };
+
+      const result = await runRouteAdvisor(oLat, oLng, dLat, dLng);
+      return { 
+        riskScore: result.riskScore, 
+        advisory: result.advisory,
+        flaggedComplaintsCount: result.flaggedComplaints.length
+      };
+    }
 
     default: {
       const error = new Error(`Unknown tool: ${name}`);

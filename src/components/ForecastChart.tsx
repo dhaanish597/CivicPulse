@@ -44,7 +44,7 @@ export const ForecastChart: React.FC<ForecastChartProps> = ({
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-      <h3 className="text-lg font-semibold text-gray-800 mb-2">
+      <h3 className="text-lg font-semibold text-brand-navy mb-2">
         7-Day Forecast {wardNumber ? `- Ward ${wardNumber}` : ''}
       </h3>
       <p className="text-xs text-gray-500 mb-4">Predicted daily complaints using exponential smoothing</p>

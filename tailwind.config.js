@@ -3,7 +3,17 @@ export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['Inter', 'sans-serif'],
+        serif: ['Lora', 'serif'],
+      },
       colors: {
+        brand: {
+          teal: '#0E5C56',
+          terracotta: '#E85D4C',
+          amber: '#F2994A',
+          navy: '#1F3A5F',
+        },
         teal: {
           DEFAULT: '#0E5C56',
           50: '#E6F2F1',

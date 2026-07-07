@@ -4,13 +4,19 @@ import { Complaint, UserLocation } from './types';
 import { Tab, TabBar, TabKey } from './components/TabBar';
 import { ReportIssue } from './components/ReportIssue';
 import { WardDashboard } from './components/WardDashboard';
+import { TrackMyReports } from './components/TrackMyReports';
+import { RoutePlanner } from './components/RoutePlanner';
 import { CityAdmin } from './components/CityAdmin';
 import { RoleSelect } from './components/RoleSelect';
+import { LocalIssuesMap } from './components/LocalIssuesMap';
 import { RoleProvider, RoleSession, useRole } from './context/RoleContext';
 import { fetchComplaints } from './services';
 
 const allTabs: Tab[] = [
+  { key: 'nearme', label: 'Local Map' },
   { key: 'report', label: 'Report an Issue' },
+  { key: 'track', label: 'My Reports' },
+  { key: 'route', label: 'Route Advisor' },
   { key: 'ward', label: 'Ward Dashboard' },
   { key: 'admin', label: 'City Admin' },
 ];
@@ -69,6 +75,13 @@ function AppShell() {
 
   const renderContent = () => {
     switch (activeTab) {
+      case 'nearme':
+        return (
+          <LocalIssuesMap 
+            userLocation={userLocation}
+            onLocationChange={setUserLocation}
+          />
+        );
       case 'report':
         return (
           <ReportIssue
@@ -77,6 +90,10 @@ function AppShell() {
             onLocationChange={setUserLocation}
           />
         );
+      case 'track':
+        return <TrackMyReports />;
+      case 'route':
+        return <RoutePlanner />;
       case 'ward':
         return <WardDashboard complaints={complaints} userLocation={userLocation} />;
       case 'admin':
@@ -103,11 +120,11 @@ function AppShell() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-[#0E5C56] rounded-lg">
+              <div className="p-2 bg-brand-teal rounded-lg">
                 <Building2 size={24} className="text-white" />
               </div>
               <div>
-                <h1 className="text-xl font-bold text-gray-800">CivicPulse</h1>
+                <h1 className="text-xl font-bold text-brand-navy">CivicPulse</h1>
                 <p className="text-xs text-gray-500">AI Decision Intelligence</p>
               </div>
             </div>
@@ -167,13 +184,13 @@ function AppShell() {
 }
 
 function tabsForRole(role: RoleSession['role']): Tab[] {
-  if (role === 'citizen') return allTabs.filter((tab) => tab.key === 'report');
+  if (role === 'citizen') return allTabs.filter((tab) => ['nearme', 'report', 'track', 'route'].includes(tab.key));
   if (role === 'officer') return allTabs.filter((tab) => tab.key === 'ward');
   return allTabs;
 }
 
 function defaultTabForRole(role: RoleSession['role']): TabKey {
-  if (role === 'citizen') return 'report';
+  if (role === 'citizen') return 'nearme';
   if (role === 'officer') return 'ward';
   return 'admin';
 }

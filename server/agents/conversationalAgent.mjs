@@ -1,84 +1,89 @@
-import { extractText, generateGeminiContent } from '../gemini.mjs';
+import { extractText, generateNvidiaContent, NVIDIA_CHAT_MODEL } from '../nvidia.mjs';
 import { executeTool, toolDeclarations } from './tools.mjs';
 
 const MAX_TOOL_ROUNDS = 4;
 
 export async function answerWithTools({ question, lat, lng }) {
-  const contents = [
+  const messages = [
     {
       role: 'user',
-      parts: [
-        {
-          text: buildPrompt(question, lat, lng),
-        },
-      ],
+      content: buildPrompt(question, lat, lng),
     },
   ];
   const toolsUsed = [];
 
+  const tools = toolDeclarations.map((decl) => ({
+    type: 'function',
+    function: decl,
+  }));
+
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-    const data = await generateGeminiContent({
-      contents,
-      tools: [{ function_declarations: toolDeclarations }],
-      tool_config: {
-        function_calling_config: {
-          mode: 'auto',
-        },
-      },
-      generationConfig: {
-        temperature: 0.2,
-        maxOutputTokens: 700,
-      },
+    const data = await generateNvidiaContent({
+      model: NVIDIA_CHAT_MODEL,
+      messages,
+      tools,
+      tool_choice: 'auto',
+      temperature: 0.2,
+      max_tokens: 700,
     });
 
-    const candidateContent = data.candidates?.[0]?.content;
-    const parts = candidateContent?.parts ?? [];
-    const functionCalls = parts.map((part) => part.functionCall).filter(Boolean);
+    const candidateMessage = data.choices?.[0]?.message;
+    if (!candidateMessage) {
+      return {
+        answer: 'The NVIDIA API returned an empty response.',
+        toolsUsed: unique(toolsUsed),
+      };
+    }
 
-    if (functionCalls.length === 0) {
-      const answer = extractText(data);
+    const toolCalls = candidateMessage.tool_calls || [];
+
+    if (toolCalls.length === 0) {
+      const answer = candidateMessage.content?.trim();
       return {
         answer: answer || 'I could not produce an answer from the available civic tools.',
         toolsUsed: unique(toolsUsed),
       };
     }
 
-    contents.push(candidateContent);
+    messages.push(candidateMessage);
 
-    const functionResponses = [];
-    for (const functionCall of functionCalls) {
-      const name = functionCall.name;
-      const args = withLocationDefaults(name, functionCall.args ?? {}, lat, lng);
-      const result = await executeTool(name, args);
-      toolsUsed.push(name);
-      functionResponses.push({
-        functionResponse: {
-          name,
-          response: {
-            result,
-          },
-        },
+    for (const toolCall of toolCalls) {
+      const name = toolCall.function.name;
+      let args = {};
+      try {
+        args = JSON.parse(toolCall.function.arguments || '{}');
+      } catch (e) {
+        console.error('Failed to parse tool arguments:', toolCall.function.arguments);
+      }
+      
+      args = withLocationDefaults(name, args, lat, lng);
+      
+      let result;
+      try {
+        result = await executeTool(name, args);
+        toolsUsed.push(name);
+      } catch (e) {
+        result = { error: e.message };
+      }
+
+      messages.push({
+        role: 'tool',
+        tool_call_id: toolCall.id,
+        content: JSON.stringify(result),
       });
     }
-
-    contents.push({
-      role: 'function',
-      parts: functionResponses,
-    });
   }
 
-  const finalData = await generateGeminiContent({
-    contents: [
-      ...contents,
-      {
-        role: 'user',
-        parts: [{ text: 'Summarize the tool results above into a concise civic operations answer.' }],
-      },
-    ],
-    generationConfig: {
-      temperature: 0.2,
-      maxOutputTokens: 500,
-    },
+  messages.push({
+    role: 'user',
+    content: 'Summarize the tool results above into a concise civic operations answer.',
+  });
+
+  const finalData = await generateNvidiaContent({
+    model: NVIDIA_CHAT_MODEL,
+    messages,
+    temperature: 0.2,
+    max_tokens: 500,
   });
 
   return {
@@ -102,6 +107,14 @@ function buildPrompt(question, lat, lng) {
 }
 
 function withLocationDefaults(name, args, lat, lng) {
+  if (name === 'check_route') {
+    return {
+      ...args,
+      _userLat: lat,
+      _userLng: lng,
+    };
+  }
+
   if (name !== 'get_nearby_issues') return args;
 
   return {

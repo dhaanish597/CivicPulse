@@ -57,12 +57,12 @@ export async function classifyComplaint(
       reasoning: typeof data.reasoning === 'string' ? data.reasoning : undefined,
     };
   } catch (error) {
-    console.warn('Gemini classification failed; using local fallback.', error);
+    console.warn('NVIDIA API classification failed; using local fallback.', error);
     const fallback = await mockClassifyComplaint(textNote);
     return {
       ...fallback,
       fallback: true,
-      error: 'Gemini classification is unavailable. Used the local demo classifier instead.',
+      error: 'NVIDIA API classification is unavailable. Used the local demo classifier instead.',
     };
   } finally {
     window.clearTimeout(timeout);

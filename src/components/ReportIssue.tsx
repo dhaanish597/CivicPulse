@@ -85,6 +85,16 @@ export const ReportIssue: React.FC<ReportIssueProps> = ({ onSubmit, userLocation
       setAgentTrace(result.trace);
       setRecommendation(result.recommendation ?? '');
       onSubmit(result.complaint);
+      
+      const stored = JSON.parse(localStorage.getItem('civicpulse_my_reports') || '[]');
+      stored.unshift({
+        id: result.complaint.id,
+        locality: result.complaint.locality,
+        category: result.complaint.category,
+        submittedAt: new Date().toISOString()
+      });
+      localStorage.setItem('civicpulse_my_reports', JSON.stringify(stored));
+
       setShowSuccess(true);
 
       setTimeout(() => {
@@ -103,7 +113,7 @@ export const ReportIssue: React.FC<ReportIssueProps> = ({ onSubmit, userLocation
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="bg-[#0E5C56] px-6 py-4">
+        <div className="bg-brand-teal px-6 py-4">
           <h2 className="text-xl font-semibold text-white">Report a Civic Issue</h2>
           <p className="text-sm text-green-100 mt-1">Upload a photo or describe the problem</p>
         </div>
@@ -112,7 +122,7 @@ export const ReportIssue: React.FC<ReportIssueProps> = ({ onSubmit, userLocation
           <div
             className={`relative border-2 border-dashed rounded-xl p-8 text-center transition-all ${
               dragActive
-                ? 'border-[#0E5C56] bg-teal-50'
+                ? 'border-brand-teal bg-teal-50'
                 : 'border-gray-200 hover:border-gray-300'
             }`}
             onDragEnter={handleDrag}
@@ -186,7 +196,7 @@ export const ReportIssue: React.FC<ReportIssueProps> = ({ onSubmit, userLocation
           </div>
 
           <div className="bg-gray-50 rounded-lg px-4 py-3 flex items-center gap-3">
-            <MapPin size={20} className="text-[#0E5C56]" />
+            <MapPin size={20} className="text-brand-teal" />
             <div>
               <p className="text-sm font-medium text-gray-700">Location Detected</p>
               <p className="text-xs text-gray-500">
@@ -202,7 +212,7 @@ export const ReportIssue: React.FC<ReportIssueProps> = ({ onSubmit, userLocation
               className={`flex-1 py-3 px-6 rounded-lg font-medium transition-all ${
                 isSubmitting || (!photoFile && !textNote.trim())
                   ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                  : 'bg-[#0E5C56] text-white hover:bg-[#0a4a45] shadow-sm'
+                  : 'bg-brand-teal text-white hover:bg-[#0a4a45] shadow-sm'
               }`}
             >
               {isSubmitting ? (
@@ -226,7 +236,7 @@ export const ReportIssue: React.FC<ReportIssueProps> = ({ onSubmit, userLocation
       <AgentActivityPanel trace={agentTrace} isRunning={isSubmitting} recommendation={recommendation} />
 
       {showSuccess && (
-        <div className="fixed bottom-8 right-8 bg-[#0E5C56] text-white px-6 py-4 rounded-xl shadow-lg flex items-center gap-3 animate-slide-up">
+        <div className="fixed bottom-8 right-8 bg-brand-teal text-white px-6 py-4 rounded-xl shadow-lg flex items-center gap-3 animate-slide-up">
           <CheckCircle size={24} />
           <div>
             <p className="font-medium">Report Submitted Successfully</p>
@@ -236,7 +246,7 @@ export const ReportIssue: React.FC<ReportIssueProps> = ({ onSubmit, userLocation
       )}
 
       {errorMessage && (
-        <div className="fixed bottom-8 left-8 bg-[#E85D4C] text-white px-6 py-4 rounded-xl shadow-lg flex items-center gap-3 animate-slide-up max-w-md">
+        <div className="fixed bottom-8 left-8 bg-brand-terracotta text-white px-6 py-4 rounded-xl shadow-lg flex items-center gap-3 animate-slide-up max-w-md">
           <AlertCircle size={24} />
           <div>
             <p className="font-medium">AI Service Fallback</p>

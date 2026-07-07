@@ -12,8 +12,10 @@ import {
 import { answerWithTools } from './agents/conversationalAgent.mjs';
 import { runPipeline } from './agents/orchestrator.mjs';
 import { localities } from './data/localities.mjs';
-import { listComplaints } from './db.mjs';
-import { classifyWithGemini } from './gemini.mjs';
+import { listComplaints, getComplaintById, listStatusEvents } from './db.mjs';
+import { classifyImage } from './nvidia.mjs';
+import { runResolution } from './agents/resolutionAgent.mjs';
+import { runRouteAdvisor } from './agents/routeAgent.mjs';
 import { seedIfEmpty } from './seed.mjs';
 import { startTelegramBot } from './telegramBot.mjs';
 import { getStatus, normalizeImageInput, redactError } from './utils.mjs';
@@ -47,6 +49,45 @@ app.post('/api/complaints', async (req, res) => {
   } catch (error) {
     console.error('/api/complaints failed:', redactError(error));
     res.status(getStatus(error)).json({ error: 'Unable to create complaint.' });
+  }
+});
+
+app.get('/api/complaints/:id', (req, res) => {
+  const complaint = getComplaintById(req.params.id);
+  if (!complaint) return res.status(404).json({ error: 'Not found' });
+  const status_events = listStatusEvents(req.params.id);
+  res.json({ ...complaint, status_events });
+});
+
+app.patch('/api/complaints/:id/status', async (req, res) => {
+  try {
+    const complaint = getComplaintById(req.params.id);
+    if (!complaint) return res.status(404).json({ error: 'Not found' });
+    
+    const { status, note } = req.body;
+    if (!['reported', 'acknowledged', 'in_progress', 'resolved'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status' });
+    }
+
+    await runResolution(complaint, status, 'officer', note);
+    res.json(getComplaintById(req.params.id));
+  } catch (error) {
+    console.error('PATCH /api/complaints/:id/status failed:', redactError(error));
+    res.status(500).json({ error: 'Update failed' });
+  }
+});
+
+app.post('/api/route-check', async (req, res) => {
+  try {
+    const { originLat, originLng, destLat, destLng } = req.body;
+    if (!originLat || !originLng || !destLat || !destLng) {
+      return res.status(400).json({ error: 'Missing origin or destination coordinates' });
+    }
+    const result = await runRouteAdvisor(originLat, originLng, destLat, destLng);
+    res.json(result);
+  } catch (error) {
+    console.error('POST /api/route-check failed:', redactError(error));
+    res.status(500).json({ error: 'Route check failed' });
   }
 });
 
@@ -91,10 +132,10 @@ app.post('/api/classify', async (req, res) => {
       return res.status(400).json({ error: 'Provide an image or a text note to classify.' });
     }
 
-    res.json(await classifyWithGemini({ textNote, image }));
+    res.json(await classifyImage({ textNote, image }));
   } catch (error) {
     console.error('/api/classify failed:', redactError(error));
-    res.status(getStatus(error)).json({ error: 'Gemini classification is unavailable.' });
+    res.status(getStatus(error)).json({ error: 'NVIDIA classification is unavailable.' });
   }
 });
 
@@ -115,7 +156,7 @@ app.post('/api/chat', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('/api/chat failed:', redactError(error));
-    res.status(getStatus(error)).json({ error: 'Gemini chat is unavailable.' });
+    res.status(getStatus(error)).json({ error: 'NVIDIA chat is unavailable.' });
   }
 });
 
@@ -141,7 +182,9 @@ if (isProduction) {
   app.use(vite.middlewares);
 }
 
-startServer(Number(process.env.PORT) || 5173);
+if (!process.env.VERCEL) {
+  startServer(Number(process.env.PORT) || 5173);
+}
 
 function startServer(port) {
   const server = app.listen(port, () => {
@@ -157,3 +200,5 @@ function startServer(port) {
     throw error;
   });
 }
+
+export default app;

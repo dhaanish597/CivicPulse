@@ -46,11 +46,11 @@ export async function answerQuestion(
       toolsUsed: Array.isArray(data.toolsUsed) ? data.toolsUsed.map(String) : [],
     };
   } catch (error) {
-    console.warn('Gemini chat failed; using local fallback.', error);
+    console.warn('NVIDIA API chat failed; using local fallback.', error);
     return {
       answer: mockAnswerQuestion(question, complaints),
       fallback: true,
-      error: 'Gemini chat is unavailable. Used the local demo assistant instead.',
+      error: 'NVIDIA API chat is unavailable. Used the local demo assistant instead.',
     };
   } finally {
     window.clearTimeout(timeout);

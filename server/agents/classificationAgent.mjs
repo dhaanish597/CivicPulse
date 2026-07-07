@@ -1,5 +1,5 @@
 import { categories } from '../data/localities.mjs';
-import { classifyWithGemini } from '../gemini.mjs';
+import { classifyImage } from '../nvidia.mjs';
 
 const categoryKeywords = {
   'Garbage Overflow': ['garbage', 'trash', 'waste', 'rubbish', 'dump', 'overflow', 'bin', 'dustbin'],
@@ -12,7 +12,7 @@ const categoryKeywords = {
 
 export async function runClassification(ingested) {
   try {
-    const result = await classifyWithGemini({
+    const result = await classifyImage({
       textNote: ingested.textNote,
       image: ingested.image,
     });
@@ -22,7 +22,7 @@ export async function runClassification(ingested) {
     const fallback = localClassify(ingested.textNote);
     return {
       ...fallback,
-      reasoning: `Gemini unavailable; local fallback matched "${fallback.category}" from complaint text.`,
+      reasoning: `NVIDIA API unavailable; local fallback matched "${fallback.category}" from complaint text.`,
       fallback: true,
       error: error instanceof Error ? error.message : String(error),
     };

@@ -1,5 +1,5 @@
 import { buildDispatchList } from '../analytics.mjs';
-import { insertAgentTrace, insertComplaint, listComplaints } from '../db.mjs';
+import { insertAgentTrace, insertComplaint, listComplaints, insertStatusEvent } from '../db.mjs';
 import { generateId } from '../utils.mjs';
 import { runClassification } from './classificationAgent.mjs';
 import { runDeduplication } from './dedupAgent.mjs';
@@ -67,7 +67,19 @@ export async function runPipeline(complaintInput) {
   });
   addTrace(trace, 'Recommendation', recommendation);
 
+  candidate.lead = recommendation;
+
   const complaint = dedup.duplicate ?? insertComplaint(candidate);
+
+  if (!dedup.duplicate) {
+    insertStatusEvent({
+      id: generateId('EVT'),
+      complaintId: complaint.id,
+      status: 'reported',
+      actor: 'agent',
+    });
+  }
+
   const storedTrace = trace.map((item) => insertAgentTrace({ ...item, complaintId: complaint.id }));
   const dispatchPreview = buildDispatchList(listComplaints({ ward: complaint.ward }), 3);
 

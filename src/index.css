@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-serif text-brand-navy;
+  }
+}
+
 :root {
   --color-teal: #0E5C56;
   --color-navy: #1F3A5F;

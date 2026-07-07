@@ -30,10 +30,10 @@ export const RoleSelect: React.FC<RoleSelectProps> = ({ onSelect }) => {
     <div className="min-h-screen bg-[#FAFBFB] flex items-center justify-center px-4 py-10">
       <div className="max-w-5xl w-full space-y-6">
         <div className="text-center">
-          <div className="inline-flex items-center justify-center p-3 bg-[#0E5C56] rounded-xl mb-4">
+          <div className="inline-flex items-center justify-center p-3 bg-brand-teal rounded-xl mb-4">
             <Building2 size={28} className="text-white" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900">CivicPulse</h1>
+          <h1 className="text-3xl font-bold text-brand-navy">CivicPulse</h1>
           <p className="text-gray-500 mt-2">Choose a demo role to continue. Data scoping is enforced by backend queries.</p>
         </div>
 
@@ -98,7 +98,7 @@ export const RoleSelect: React.FC<RoleSelectProps> = ({ onSelect }) => {
             disabled={!canContinue}
             className={`w-full py-3 rounded-lg font-medium transition-colors ${
               canContinue
-                ? 'bg-[#0E5C56] text-white hover:bg-[#0a4a45]'
+                ? 'bg-brand-teal text-white hover:bg-[#0a4a45]'
                 : 'bg-gray-100 text-gray-400 cursor-not-allowed'
             }`}
           >
@@ -135,17 +135,17 @@ const RoleCard: React.FC<RoleCardProps> = ({
       onClick={() => onSelect(role)}
       className={`text-left bg-white rounded-xl border p-5 transition-all ${
         selected
-          ? 'border-[#0E5C56] ring-2 ring-teal-100'
+          ? 'border-brand-teal ring-2 ring-teal-100'
           : 'border-gray-100 hover:border-gray-200'
       }`}
     >
       <div className={`w-11 h-11 rounded-lg flex items-center justify-center mb-4 ${
-        selected ? 'bg-[#0E5C56] text-white' : 'bg-gray-100 text-gray-500'
+        selected ? 'bg-brand-teal text-white' : 'bg-gray-100 text-gray-500'
       }`}
       >
         {icon}
       </div>
-      <div className="font-semibold text-gray-900">{title}</div>
+      <div className="font-semibold text-brand-navy">{title}</div>
       <p className="text-sm text-gray-500 mt-2">{description}</p>
     </button>
   );

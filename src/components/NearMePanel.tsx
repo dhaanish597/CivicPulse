@@ -82,8 +82,8 @@ export const NearMePanel: React.FC<NearMePanelProps> = ({ onLocationChange }) =>
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
       <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2">
-        <Navigation size={18} className="text-[#0E5C56]" />
-        <h3 className="font-semibold text-gray-800">Issues Near Me</h3>
+        <Navigation size={18} className="text-brand-teal" />
+        <h3 className="font-semibold text-brand-navy">Issues Near Me</h3>
       </div>
 
       <div className="p-5 space-y-4">
@@ -95,7 +95,7 @@ export const NearMePanel: React.FC<NearMePanelProps> = ({ onLocationChange }) =>
             className={`flex-1 px-4 py-2.5 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 ${
               isLoading
                 ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                : 'bg-[#0E5C56] text-white hover:bg-[#0a4a45]'
+                : 'bg-brand-teal text-white hover:bg-[#0a4a45]'
             }`}
           >
             {isLoading ? <Loader2 size={18} className="animate-spin" /> : <LocateFixed size={18} />}
@@ -128,7 +128,7 @@ export const NearMePanel: React.FC<NearMePanelProps> = ({ onLocationChange }) =>
 
         {activeLabel && (
           <div className="flex items-center gap-2 text-sm text-gray-600">
-            <MapPin size={16} className="text-[#0E5C56]" />
+            <MapPin size={16} className="text-brand-teal" />
             Searching within 2 km of {activeLabel}
           </div>
         )}
@@ -150,7 +150,7 @@ export const NearMePanel: React.FC<NearMePanelProps> = ({ onLocationChange }) =>
                   style={{ backgroundColor: categoryColors[issue.category] }}
                 />
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-gray-800">{issue.category}</div>
+                  <div className="text-sm font-medium text-brand-navy">{issue.category}</div>
                   <div className="text-xs text-gray-500">
                     {formatDistance(issue.distanceKm)} away · {issue.daysOpen} day{issue.daysOpen === 1 ? '' : 's'} open · Open
                   </div>

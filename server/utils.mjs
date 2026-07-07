@@ -29,7 +29,7 @@ export function normalizeImageInput(input) {
 
 export function redactError(error) {
   const raw = error instanceof Error ? error.message : String(error);
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.NVIDIA_API_KEY;
   const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
 
   return [apiKey, telegramToken].filter(Boolean).reduce(

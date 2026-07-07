@@ -51,6 +51,37 @@ export function initSchema(database = getDb()) {
     CREATE INDEX IF NOT EXISTS idx_complaints_category ON complaints (category);
     CREATE INDEX IF NOT EXISTS idx_agent_traces_complaint_id ON agent_traces (complaint_id);
   `);
+
+  const cols = database.prepare("PRAGMA table_info(complaints)").all();
+  if (!cols.some(c => c.name === 'status')) {
+    database.exec(`
+      ALTER TABLE complaints ADD COLUMN status TEXT NOT NULL DEFAULT 'reported';
+      ALTER TABLE complaints ADD COLUMN lead TEXT;
+      ALTER TABLE complaints ADD COLUMN status_updated_at TEXT;
+      
+      CREATE TABLE IF NOT EXISTS status_events (
+        id TEXT PRIMARY KEY,
+        complaint_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        note TEXT,
+        actor TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      
+      UPDATE complaints SET status = 'resolved' WHERE resolved = 1;
+    `);
+  } else {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS status_events (
+        id TEXT PRIMARY KEY,
+        complaint_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        note TEXT,
+        actor TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+    `);
+  }
 }
 
 export function countComplaints(database = getDb()) {
@@ -92,6 +123,7 @@ export function getComplaintById(id, database = getDb()) {
 
 export function insertComplaint(complaint, database = getDb()) {
   const locality = complaint.locality || getLocalityByWard(complaint.ward).locality;
+  const status = complaint.status || (complaint.resolved ? 'resolved' : 'reported');
   const row = {
     id: complaint.id,
     ward: complaint.ward,
@@ -106,21 +138,40 @@ export function insertComplaint(complaint, database = getDb()) {
     source: complaint.source,
     description: complaint.description ?? null,
     reasoning: complaint.reasoning ?? null,
+    status: status,
+    lead: complaint.lead ?? null,
+    status_updated_at: complaint.statusUpdatedAt ?? new Date().toISOString(),
   };
 
   database
     .prepare(`
       INSERT INTO complaints (
         id, ward, locality, category, severity, reported_at, resolved, days_open,
-        lat, lng, source, description, reasoning
+        lat, lng, source, description, reasoning, status, lead, status_updated_at
       ) VALUES (
         @id, @ward, @locality, @category, @severity, @reported_at, @resolved,
-        @days_open, @lat, @lng, @source, @description, @reasoning
+        @days_open, @lat, @lng, @source, @description, @reasoning, @status, @lead, @status_updated_at
       )
     `)
     .run(row);
 
   return getComplaintById(row.id, database);
+}
+
+export function updateComplaintStatus(id, updates, database = getDb()) {
+  const row = {
+    id,
+    status: updates.status,
+    lead: updates.lead ?? null,
+    status_updated_at: new Date().toISOString(),
+    resolved: updates.status === 'resolved' ? 1 : 0,
+  };
+  
+  database.prepare(`
+    UPDATE complaints 
+    SET status = @status, lead = COALESCE(@lead, lead), status_updated_at = @status_updated_at, resolved = @resolved
+    WHERE id = @id
+  `).run(row);
 }
 
 export function insertAgentTrace(trace, database = getDb()) {
@@ -148,6 +199,35 @@ export function listAgentTraces(complaintId, database = getDb()) {
     .prepare('SELECT * FROM agent_traces WHERE complaint_id = ? ORDER BY step_order ASC')
     .all(complaintId)
     .map(rowToTrace);
+}
+
+export function insertStatusEvent(event, database = getDb()) {
+  const row = {
+    id: event.id,
+    complaint_id: event.complaintId,
+    status: event.status,
+    note: event.note ?? null,
+    actor: event.actor,
+    created_at: event.createdAt ?? new Date().toISOString(),
+  };
+  database.prepare(`
+    INSERT INTO status_events (id, complaint_id, status, note, actor, created_at)
+    VALUES (@id, @complaint_id, @status, @note, @actor, @created_at)
+  `).run(row);
+}
+
+export function listStatusEvents(complaintId, database = getDb()) {
+  return database
+    .prepare('SELECT * FROM status_events WHERE complaint_id = ? ORDER BY created_at ASC')
+    .all(complaintId)
+    .map(row => ({
+      id: row.id,
+      complaintId: row.complaint_id,
+      status: row.status,
+      note: row.note ?? undefined,
+      actor: row.actor,
+      createdAt: row.created_at,
+    }));
 }
 
 export function clearSeedData(database = getDb()) {
@@ -182,6 +262,9 @@ export function rowToComplaint(row) {
     address: row.locality,
     description: row.description ?? undefined,
     reasoning: row.reasoning ?? undefined,
+    status: row.status || (row.resolved ? 'resolved' : 'reported'),
+    lead: row.lead ?? undefined,
+    statusUpdatedAt: row.status_updated_at ?? undefined,
   };
 }
 

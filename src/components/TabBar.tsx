@@ -1,6 +1,6 @@
 import React from 'react';
 
-export type TabKey = 'report' | 'ward' | 'admin';
+export type TabKey = 'report' | 'ward' | 'admin' | 'track' | 'route' | 'nearme';
 
 export interface Tab {
   key: TabKey;
@@ -27,8 +27,8 @@ export const TabBar: React.FC<TabBarProps> = ({ activeTab, onTabChange, tabs }) 
                 className={`
                   px-4 py-4 text-sm font-medium rounded-t-lg transition-all duration-200
                   ${isActive
-                    ? 'bg-[#0E5C56] text-white'
-                    : 'text-gray-600 hover:text-[#0E5C56] hover:bg-gray-50'
+                    ? 'bg-brand-teal text-white'
+                    : 'text-gray-600 hover:text-brand-teal hover:bg-gray-50'
                   }
                 `}
               >

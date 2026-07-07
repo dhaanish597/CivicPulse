@@ -9,3 +9,7 @@ export { ReportIssue } from './ReportIssue';
 export { RoleSelect } from './RoleSelect';
 export { WardDashboard } from './WardDashboard';
 export { CityAdmin } from './CityAdmin';
+export { TrackMyReports } from './TrackMyReports';
+export { OfficerLeadsBoard } from './OfficerLeadsBoard';
+export { RoutePlanner } from './RoutePlanner';
+export { LocalIssuesMap } from './LocalIssuesMap';

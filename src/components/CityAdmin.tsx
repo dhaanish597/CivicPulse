@@ -104,19 +104,19 @@ export const CityAdmin: React.FC<CityAdminProps> = ({ complaints }) => {
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
             <div className="flex items-center gap-2 mb-4">
               <Lightbulb size={20} className="text-[#F2994A]" />
-              <h3 className="text-lg font-semibold text-gray-800">Resource Allocation</h3>
+              <h3 className="text-lg font-semibold text-brand-navy">Resource Allocation</h3>
             </div>
             <div className="bg-gradient-to-r from-[#FAFBFB] to-[#F0F5F5] rounded-lg p-4 border border-gray-100">
               <div className="flex items-center gap-3 mb-3">
-                <TrendingUp size={24} className="text-[#E85D4C]" />
+                <TrendingUp size={24} className="text-brand-terracotta" />
                 <div>
                   <p className="text-sm text-gray-600">Priority Ward</p>
-                  <p className="text-xl font-bold text-[#0E5C56]">Ward {weekForecast?.ward || topWard.ward}</p>
+                  <p className="text-xl font-bold text-brand-teal">Ward {weekForecast?.ward || topWard.ward}</p>
                 </div>
               </div>
               <p className="text-sm text-gray-600 leading-relaxed">
                 <strong>Recommendation:</strong> Reroute{' '}
-                <span className="font-bold text-[#E85D4C]">{recommendedCrews} cleanup crews</span>{' '}
+                <span className="font-bold text-brand-terracotta">{recommendedCrews} cleanup crews</span>{' '}
                 to Ward {weekForecast?.ward || topWard.ward} this week. Expected{' '}
                 <span className="font-medium">{weekForecast?.forecast || 0}</span> new complaints.
               </p>
@@ -130,8 +130,8 @@ export const CityAdmin: React.FC<CityAdminProps> = ({ complaints }) => {
 
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
             <div className="flex items-center gap-2 mb-4">
-              <AlertTriangle size={20} className="text-[#E85D4C]" />
-              <h3 className="text-lg font-semibold text-gray-800">Critical Alerts</h3>
+              <AlertTriangle size={20} className="text-brand-terracotta" />
+              <h3 className="text-lg font-semibold text-brand-navy">Critical Alerts</h3>
             </div>
             <div className="space-y-3">
               {hotspots.slice(0, 3).map((h, idx) => (
@@ -141,13 +141,13 @@ export const CityAdmin: React.FC<CityAdminProps> = ({ complaints }) => {
                 >
                   <span
                     className={`w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold ${
-                      idx === 0 ? 'bg-[#E85D4C]' : idx === 1 ? 'bg-[#F2994A]' : 'bg-[#1F3A5F]'
+                      idx === 0 ? 'bg-brand-terracotta' : idx === 1 ? 'bg-[#F2994A]' : 'bg-[#1F3A5F]'
                     }`}
                   >
                     {idx + 1}
                   </span>
                   <div className="flex-1">
-                    <span className="font-medium text-gray-800">Ward {h.ward}</span>
+                    <span className="font-medium text-brand-navy">Ward {h.ward}</span>
                     <span className="text-gray-500"> - {h.category}</span>
                   </div>
                   <span className="text-xs bg-gray-100 px-2 py-1 rounded">{h.count}</span>
@@ -160,8 +160,8 @@ export const CityAdmin: React.FC<CityAdminProps> = ({ complaints }) => {
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
-          <Calendar size={20} className="text-[#0E5C56]" />
-          <h3 className="font-semibold text-gray-800">Citywide Complaint Map</h3>
+          <Calendar size={20} className="text-brand-teal" />
+          <h3 className="font-semibold text-brand-navy">Citywide Complaint Map</h3>
           <span className="text-xs text-gray-400 ml-auto">Open complaints and 30-day ward intensity</span>
         </div>
         <MapView complaints={complaints} height="360px" />
@@ -169,8 +169,8 @@ export const CityAdmin: React.FC<CityAdminProps> = ({ complaints }) => {
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
         <div className="flex items-center gap-2 mb-4">
-          <Calendar size={20} className="text-[#0E5C56]" />
-          <h3 className="font-semibold text-gray-800">Weekly Forecast by Ward</h3>
+          <Calendar size={20} className="text-brand-teal" />
+          <h3 className="font-semibold text-brand-navy">Weekly Forecast by Ward</h3>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
           {sortedWards.map(({ ward, forecast }) => {
@@ -185,8 +185,8 @@ export const CityAdmin: React.FC<CityAdminProps> = ({ complaints }) => {
                     : 'border-gray-100 bg-gray-50'
                 }`}
               >
-                <div className="font-medium text-gray-800">Ward {ward}</div>
-                <div className="text-2xl font-bold text-[#0E5C56] mt-1">{forecast}</div>
+                <div className="font-medium text-brand-navy">Ward {ward}</div>
+                <div className="text-2xl font-bold text-brand-teal mt-1">{forecast}</div>
                 <div className="text-xs text-gray-500">{wardOpen} open / {wardTotal} total</div>
               </div>
             );
