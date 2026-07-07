@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: civicpulse-backend
+    env: node
+    buildCommand: npm install
+    startCommand: node server/index.mjs
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ALLOWED_ORIGIN
+        sync: false

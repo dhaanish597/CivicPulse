@@ -88,7 +88,7 @@ export const OfficerLeadsBoard: React.FC<OfficerLeadsBoardProps> = ({ ward }) =>
 
   const fetchComplaints = async () => {
     try {
-      const res = await fetch(`/api/complaints?ward=${ward}`);
+      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173'}/api/complaints?ward=${ward}`);
       if (res.ok) {
         const data = await res.json();
         // Sort by urgency roughly
@@ -110,7 +110,7 @@ export const OfficerLeadsBoard: React.FC<OfficerLeadsBoardProps> = ({ ward }) =>
 
   const handleStatusUpdate = async (id: string, newStatus: string) => {
     try {
-      const res = await fetch(`/api/complaints/${id}/status`, {
+      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173'}/api/complaints/${id}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus }),

@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import express from 'express';
+import cors from 'cors';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -33,6 +34,14 @@ const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
 
 app.use(express.json({ limit: '16mb' }));
+
+app.use(cors({
+  origin: process.env.ALLOWED_ORIGIN || (process.env.NODE_ENV === 'production' ? false : '*'),
+}));
+
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
 
 app.get('/api/localities', (_req, res) => {
   res.json(localities);
@@ -182,13 +191,11 @@ if (isProduction) {
   app.use(vite.middlewares);
 }
 
-if (!process.env.VERCEL) {
-  startServer(Number(process.env.PORT) || 5173);
-}
+startServer(Number(process.env.PORT) || 5173);
 
 function startServer(port) {
-  const server = app.listen(port, () => {
-    console.log(`CivicPulse dev server running at http://localhost:${port}`);
+  const server = app.listen(port, '0.0.0.0', () => {
+    console.log(`CivicPulse dev server running at http://0.0.0.0:${port}`);
   });
 
   server.on('error', (error) => {

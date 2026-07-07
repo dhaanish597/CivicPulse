@@ -26,7 +26,7 @@ export async function fetchComplaints(params: { ward?: number; resolved?: boolea
   if (params.resolved !== undefined) search.set('resolved', String(params.resolved));
   if (params.since) search.set('since', params.since);
 
-  const response = await fetch(`/api/complaints${search.toString() ? `?${search}` : ''}`);
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173'}/api/complaints${search.toString() ? `?${search}` : ''}`);
   if (!response.ok) throw new Error('Unable to load complaints.');
 
   const data = await response.json();
@@ -34,7 +34,7 @@ export async function fetchComplaints(params: { ward?: number; resolved?: boolea
 }
 
 export async function createComplaint(input: CreateComplaintInput): Promise<CreateComplaintResponse> {
-  const response = await fetch('/api/complaints', {
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173'}/api/complaints`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -66,13 +66,13 @@ export async function createComplaint(input: CreateComplaintInput): Promise<Crea
 }
 
 export async function fetchHotspots(limit = 20) {
-  const response = await fetch(`/api/hotspots?limit=${limit}`);
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173'}/api/hotspots?limit=${limit}`);
   if (!response.ok) throw new Error('Unable to load hotspots.');
   return response.json();
 }
 
 export async function fetchForecast(ward?: number) {
-  const response = await fetch(`/api/forecast${ward ? `?ward=${ward}` : ''}`);
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173'}/api/forecast${ward ? `?ward=${ward}` : ''}`);
   if (!response.ok) throw new Error('Unable to load forecast.');
   return response.json();
 }
@@ -81,7 +81,7 @@ export async function fetchDispatch(ward?: number, limit = 8): Promise<Complaint
   const search = new URLSearchParams({ limit: String(limit) });
   if (ward) search.set('ward', String(ward));
 
-  const response = await fetch(`/api/dispatch?${search}`);
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173'}/api/dispatch?${search}`);
   if (!response.ok) throw new Error('Unable to load dispatch list.');
 
   const data = await response.json();
@@ -95,7 +95,7 @@ export async function fetchNearbyIssues(lat: number, lng: number, radiusKm = 2):
     radius_km: String(radiusKm),
   });
 
-  const response = await fetch(`/api/nearby?${search}`);
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173'}/api/nearby?${search}`);
   if (!response.ok) throw new Error('Unable to load nearby issues.');
 
   const data = await response.json();

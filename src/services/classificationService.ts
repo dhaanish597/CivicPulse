@@ -28,7 +28,7 @@ export async function classifyComplaint(
   const timeout = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
 
   try {
-    const response = await fetch('/api/classify', {
+    const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173'}/api/classify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,

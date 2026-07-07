@@ -28,7 +28,7 @@ export const TrackMyReports: React.FC = () => {
 
       const detailsMap: Record<string, ReportDetails> = {};
       for (const r of stored) {
-        const res = await fetch(`/api/complaints/${r.id}`);
+        const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173'}/api/complaints/${r.id}`);
         if (res.ok) {
           detailsMap[r.id] = await res.json();
         }
