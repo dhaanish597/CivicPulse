@@ -1,4 +1,5 @@
 import { AgentTrace, Complaint } from '../types';
+import { cacheEvidenceUrl, uploadEvidence } from './verificationService';
 
 export interface CreateComplaintInput {
   textNote: string;
@@ -58,8 +59,31 @@ export async function createComplaint(input: CreateComplaintInput): Promise<Crea
   }
 
   const data = await response.json();
+  const complaint = normalizeComplaint(data.complaint);
+
+  // Task 2's /verify contract requires a stored 'intake' evidence row to
+  // exist (server/index.mjs), but the original complaint-creation flow
+  // (this function) never wrote one — it sends the photo as inline base64
+  // in the JSON body above, not through the evidence endpoint. Task 2's own
+  // report flagged this as an unresolved gap ("Also flagging" in
+  // task-2-report.md Step 4). Closing it here, using only the given
+  // POST .../evidence contract: if a photo was submitted, immediately
+  // register it as 'intake' evidence too, so the citizen's later
+  // verification flow doesn't dead-end on "Intake evidence is required".
+  // Best-effort and non-fatal — the complaint itself was already created
+  // successfully; a failure here just means verification will need a manual
+  // fallback later (surfaced as that endpoint's own 400, not swallowed).
+  if (input.photoFile) {
+    try {
+      const evidence = await uploadEvidence(complaint.id, input.photoFile, 'intake');
+      cacheEvidenceUrl(complaint.id, 'intake', evidence.imageUrl);
+    } catch (error) {
+      console.error('Unable to register intake evidence photo:', error);
+    }
+  }
+
   return {
-    complaint: normalizeComplaint(data.complaint),
+    complaint,
     trace: Array.isArray(data.trace) ? data.trace.map(normalizeTrace) : [],
     duplicateOf: data.duplicateOf,
     recommendation: data.recommendation,
@@ -103,7 +127,46 @@ export async function fetchNearbyIssues(lat: number, lng: number, radiusKm = 2):
   return data.map(normalizeComplaint);
 }
 
-function normalizeComplaint(raw: Record<string, unknown>): Complaint {
+/**
+ * Thrown by updateComplaintStatus() specifically for the 409 an officer hits
+ * trying to close a complaint without a 'verified' verdict (server/index.mjs
+ * PATCH /api/complaints/:id/status). Carries the response's exact
+ * `verification_status` field (snake_case in the wire body, per Task 2's
+ * contract) so callers can explain *why* rather than showing a bare error.
+ */
+export class StatusUpdateError extends Error {
+  status: number;
+  verificationStatus?: string;
+
+  constructor(message: string, status: number, verificationStatus?: string) {
+    super(message);
+    this.name = 'StatusUpdateError';
+    this.status = status;
+    this.verificationStatus = verificationStatus;
+  }
+}
+
+export async function updateComplaintStatus(id: string, status: string, note?: string): Promise<Complaint> {
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173'}/api/complaints/${id}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status, note }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new StatusUpdateError(
+      typeof data.error === 'string' ? data.error : 'Unable to update status.',
+      response.status,
+      data.verification_status,
+    );
+  }
+
+  return normalizeComplaint(data);
+}
+
+export function normalizeComplaint(raw: Record<string, unknown>): Complaint {
   const reportedAt = raw.reportedAt instanceof Date
     ? raw.reportedAt
     : new Date(String(raw.reportedAt ?? raw.reported_at));
@@ -128,6 +191,20 @@ function normalizeComplaint(raw: Record<string, unknown>): Complaint {
     zone: raw.zone ? String(raw.zone) : undefined,
     circle: raw.circle ? String(raw.circle) : undefined,
     wardName: raw.wardName ? String(raw.wardName) : (raw.ward_name ? String(raw.ward_name) : undefined),
+    status: (raw.status as Complaint['status']) ?? undefined,
+    lead: raw.lead ? String(raw.lead) : undefined,
+    statusUpdatedAt: raw.statusUpdatedAt
+      ? String(raw.statusUpdatedAt)
+      : (raw.status_updated_at ? String(raw.status_updated_at) : undefined),
+    verificationStatus: (raw.verificationStatus as Complaint['verificationStatus'])
+      ?? (raw.verification_status as Complaint['verificationStatus'])
+      ?? undefined,
+    verificationReasoning: raw.verificationReasoning
+      ? String(raw.verificationReasoning)
+      : (raw.verification_reasoning ? String(raw.verification_reasoning) : undefined),
+    verifiedAt: raw.verifiedAt
+      ? String(raw.verifiedAt)
+      : (raw.verified_at ? String(raw.verified_at) : undefined),
   };
 }
 

@@ -1,7 +1,7 @@
-import React, { useMemo } from 'react';
-import { TrendingUp, Calendar, AlertTriangle, Lightbulb } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, Calendar, ChevronDown, ChevronUp, Lightbulb, ShieldOff, TrendingUp } from 'lucide-react';
 import { Complaint } from '../types';
-import { detectHotspots, getTopHotspotWard, computeDailyCounts, forecastNext7Days } from '../services';
+import { detectHotspots, getTopHotspotWard, computeDailyCounts, forecastNext7Days, fetchVerificationStats, VerificationStats } from '../services';
 import { KPICard } from './KPICard';
 import { HotspotBarChart } from './HotspotBarChart';
 import { MapView } from './MapView';
@@ -69,8 +69,132 @@ export const CityAdmin: React.FC<CityAdminProps> = ({ complaints }) => {
   const weekForecast2 = sortedWards[1];
   const recommendedCrews = Math.min(Math.ceil((weekForecast?.forecast || 0) / 8), 5);
 
+  // City Admin already receives `complaints` as a prop from App.tsx (no
+  // ward/circle filter for this role — see App.tsx's fetchComplaints() call),
+  // so this stat is the only thing on the page that needs its own fetch —
+  // there's no existing prop chain carrying verification-stats down from
+  // App.tsx, and threading one through solely for this single self-contained
+  // number would be more plumbing than the stat is worth (Task 3 brief §5).
+  const [stats, setStats] = useState<VerificationStats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [statsError, setStatsError] = useState('');
+  const [showUnverifiedList, setShowUnverifiedList] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    setStatsLoading(true);
+    fetchVerificationStats()
+      .then((data) => {
+        if (isMounted) {
+          setStats(data);
+          setStatsError('');
+        }
+      })
+      .catch(() => {
+        if (isMounted) setStatsError('Unable to load verification stats.');
+      })
+      .finally(() => {
+        if (isMounted) setStatsLoading(false);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // GET /api/verification-stats returns citywide counts with no time
+  // dimension (Task 2's fixed contract — no "last N days" breakdown exists
+  // server-side). The brief's copy suggested framing this as a 30-day
+  // window; rather than inventing a new endpoint to support one, this uses
+  // the honest all-time figure the given endpoint actually provides — see
+  // task-3-report.md "Concerns" for the full note on this wording choice.
+  const closedCount = stats
+    ? stats.counts.verified + stats.counts.disputed + stats.counts.inconclusive + stats.counts.unverified
+    : 0;
+  const unverifiedPct = stats && closedCount > 0
+    ? Math.round((stats.counts.unverified / closedCount) * 100)
+    : null;
+  const unverifiedCount = stats?.counts.unverified ?? 0;
+  const disputedRatePct = stats ? Math.round(stats.disputed_rate * 100) : 0;
+
+  const unverifiedComplaints = useMemo(
+    () => complaints.filter((c) => c.verificationStatus === 'unverified'),
+    [complaints]
+  );
+
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+      {statsLoading ? (
+        <div className="bg-brand-navy rounded-3xl p-8 sm:p-10 animate-pulse">
+          <div className="h-3 w-40 bg-white/10 rounded mb-4" />
+          <div className="h-16 w-64 bg-white/10 rounded mb-3" />
+          <div className="h-3 w-56 bg-white/10 rounded" />
+        </div>
+      ) : statsError || unverifiedPct === null ? (
+        <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 flex items-center gap-4">
+          <div className="p-3 bg-gray-50 rounded-xl">
+            <ShieldOff className="text-gray-400" size={28} />
+          </div>
+          <div>
+            <p className="font-semibold text-brand-navy">Verification stats unavailable</p>
+            <p className="text-sm text-gray-500 mt-1">{statsError || 'No closures have been recorded yet.'}</p>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-brand-navy rounded-3xl shadow-lg overflow-hidden text-white">
+          <div className="p-8 sm:p-10">
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-white/50 mb-4">Verification Integrity</p>
+            <div className="flex items-baseline gap-3 flex-wrap">
+              <span className="text-6xl sm:text-7xl font-bold leading-none tabular-nums">{unverifiedPct}%</span>
+              <span className="text-lg sm:text-xl text-white/85 max-w-md leading-snug">
+                of closed complaints were never independently verified
+              </span>
+            </div>
+            <p className="text-sm text-white/50 mt-5">
+              {unverifiedCount.toLocaleString()} of {closedCount.toLocaleString()} closures citywide have no counter-evidence on file
+              {disputedRatePct > 0 && ` · ${disputedRatePct}% of verified closures were disputed`}
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowUnverifiedList((v) => !v)}
+              className="mt-6 inline-flex items-center gap-2 text-sm font-medium bg-white/10 hover:bg-white/20 px-4 py-2 rounded-lg transition-colors"
+            >
+              {showUnverifiedList ? 'Hide' : 'View'} unverified complaints
+              {showUnverifiedList ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+          </div>
+
+          {showUnverifiedList && (
+            <div className="bg-white text-brand-navy px-6 sm:px-10 py-5 border-t border-white/10">
+              {unverifiedComplaints.length === 0 ? (
+                <p className="text-sm text-gray-500 py-2">
+                  None of the complaints currently loaded in this view are unverified.
+                </p>
+              ) : (
+                <>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">
+                    {unverifiedComplaints.length} unverified closure{unverifiedComplaints.length === 1 ? '' : 's'}
+                  </p>
+                  <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                    {unverifiedComplaints.slice(0, 8).map((c) => (
+                      <div key={c.id} className="flex items-center justify-between gap-3 text-sm border-b border-gray-50 pb-2">
+                        <div className="min-w-0">
+                          <span className="font-medium text-brand-navy">{c.category}</span>
+                          <span className="text-gray-400"> · Ward {c.ward}{c.wardName ? ` (${c.wardName})` : ''}</span>
+                        </div>
+                        <span className="text-xs text-gray-400 shrink-0">{c.id}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {unverifiedComplaints.length > 8 && (
+                    <p className="text-xs text-gray-400 mt-3">and {unverifiedComplaints.length - 8} more...</p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <KPICard
           title="Total Open Issues"

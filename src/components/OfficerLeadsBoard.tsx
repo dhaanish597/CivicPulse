@@ -1,7 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { CheckCircle, Activity } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Camera, CheckCircle, Activity, Lock, X } from 'lucide-react';
 import { Complaint } from '../types';
 import { categoryColors } from '../data/categoryColors';
+import { fetchComplaints, updateComplaintStatus } from '../services';
+import { getCachedEvidenceUrls, uploadEvidence } from '../services/verificationService';
+import { VerificationPanel } from './VerificationPanel';
 
 interface OfficerLeadsBoardProps {
   ward?: number;
@@ -9,23 +12,30 @@ interface OfficerLeadsBoardProps {
 }
 
 interface LeadCardProps {
-  complaint: Complaint & { status?: string; lead?: string };
-  onStatusUpdate: (id: string, newStatus: string) => void;
+  complaint: Complaint;
+  onStatusUpdate: (id: string, newStatus: string) => Promise<void>;
+  onClaimResolution: (id: string, file: File) => Promise<void>;
 }
 
-const LeadCard: React.FC<LeadCardProps> = ({ complaint, onStatusUpdate }) => {
+const LeadCard: React.FC<LeadCardProps> = ({ complaint, onStatusUpdate, onClaimResolution }) => {
   const [loading, setLoading] = useState(false);
+  const [claiming, setClaiming] = useState(false);
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [proofPreview, setProofPreview] = useState<string | null>(null);
+  const [claimError, setClaimError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const getNextAction = (status: string) => {
-    switch (status) {
+  const status = complaint.status || 'reported';
+
+  const getNextAction = (s: string) => {
+    switch (s) {
       case 'reported': return { label: 'Acknowledge', next: 'acknowledged', color: 'bg-blue-600 hover:bg-blue-700' };
       case 'acknowledged': return { label: 'Start Work', next: 'in_progress', color: 'bg-amber-600 hover:bg-amber-700' };
-      case 'in_progress': return { label: 'Resolve', next: 'resolved', color: 'bg-green-600 hover:bg-green-700' };
       default: return null;
     }
   };
 
-  const action = getNextAction(complaint.status || 'reported');
+  const action = getNextAction(status);
 
   const handleAction = async () => {
     if (!action) return;
@@ -33,6 +43,73 @@ const LeadCard: React.FC<LeadCardProps> = ({ complaint, onStatusUpdate }) => {
     await onStatusUpdate(complaint.id, action.next);
     setLoading(false);
   };
+
+  const handleProofFile = (file: File) => {
+    setProofFile(file);
+    setProofPreview(URL.createObjectURL(file));
+    setClaimError('');
+  };
+
+  const cancelClaim = () => {
+    setClaiming(false);
+    setProofFile(null);
+    setProofPreview(null);
+    setClaimError('');
+  };
+
+  const handleClaimSubmit = async () => {
+    if (!proofFile) return;
+    setLoading(true);
+    setClaimError('');
+    try {
+      await onClaimResolution(complaint.id, proofFile);
+      cancelClaim();
+    } catch (error) {
+      setClaimError(error instanceof Error ? error.message : 'Unable to submit proof of resolution.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Once an officer claims resolution, they lose all control over this
+  // complaint from this screen — no button can close it. Only the citizen's
+  // own photo (uploaded from TrackMyReports) can move it forward, per
+  // Task 2's hard backend rule (POST .../verify never reads officer_proof).
+  if (status === 'resolution_claimed') {
+    const cached = getCachedEvidenceUrls(complaint.id);
+    const verdict = complaint.verificationStatus === 'verified'
+      || complaint.verificationStatus === 'disputed'
+      || complaint.verificationStatus === 'inconclusive'
+      ? complaint.verificationStatus
+      : undefined;
+
+    return (
+      <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 shadow-sm opacity-80 flex flex-col gap-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-3">
+            <div className="w-1.5 h-10 rounded-full bg-gray-300" />
+            <div>
+              <span className="text-xs font-bold text-gray-400">{complaint.id}</span>
+              <h4 className="font-semibold text-gray-500 mt-1">{complaint.category}</h4>
+              <p className="text-xs text-gray-400 mt-0.5">{complaint.address}</p>
+            </div>
+          </div>
+          <span className="inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-full bg-gray-200 text-gray-600 font-semibold uppercase tracking-wide whitespace-nowrap">
+            <Lock size={12} /> Awaiting citizen verification
+          </span>
+        </div>
+
+        <VerificationPanel
+          intakeImageUrl={cached.intake}
+          proofImageUrl={cached.officer_proof}
+          proofLabel="Officer's Proof Photo"
+          verdict={verdict}
+          reasoning={complaint.verificationReasoning}
+          note="Shown for comparison only — the citizen's independent photo (not this one) is what confirms or disputes the resolution."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm hover:shadow-md transition-shadow flex flex-col gap-3">
@@ -65,31 +142,93 @@ const LeadCard: React.FC<LeadCardProps> = ({ complaint, onStatusUpdate }) => {
         </div>
       )}
 
-      <div className="flex items-center justify-between mt-2 pt-3 border-t border-gray-50">
-        <span className="text-xs font-medium text-gray-500 flex items-center gap-1 uppercase tracking-wide">
-          Status: <span className="text-brand-navy font-bold ml-1">{complaint.status?.replace('_', ' ') || 'REPORTED'}</span>
-        </span>
-        {action && (
-          <button
-            onClick={handleAction}
-            disabled={loading}
-            className={`px-4 py-1.5 rounded-lg text-sm font-semibold text-white shadow-sm transition-all ${action.color} ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
-          >
-            {loading ? 'Updating...' : action.label}
-          </button>
-        )}
-      </div>
+      {claiming ? (
+        <div className="border-t border-gray-50 pt-3 mt-1 space-y-3">
+          <p className="text-sm font-semibold text-brand-navy">Upload proof of resolution</p>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => e.target.files && handleProofFile(e.target.files[0])}
+          />
+
+          {proofPreview ? (
+            <div className="flex items-center gap-3">
+              <img src={proofPreview} alt="Proof preview" className="w-16 h-16 rounded-lg object-cover border border-gray-200" />
+              <button type="button" onClick={() => fileInputRef.current?.click()} className="text-xs font-medium text-brand-teal hover:underline">
+                Change photo
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="w-full border-2 border-dashed border-gray-200 rounded-lg py-5 text-sm text-gray-500 hover:border-brand-teal hover:text-brand-teal transition-colors flex flex-col items-center gap-1.5"
+            >
+              <Camera size={20} />
+              Select a proof photo
+            </button>
+          )}
+
+          {claimError && <p className="text-xs text-red-600">{claimError}</p>}
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={handleClaimSubmit}
+              disabled={!proofFile || loading}
+              className={`flex-1 py-2 rounded-lg text-sm font-semibold text-white shadow-sm transition-all ${
+                !proofFile || loading ? 'bg-gray-300 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'
+              }`}
+            >
+              {loading ? 'Submitting...' : 'Submit Proof & Claim Resolution'}
+            </button>
+            <button
+              type="button"
+              onClick={cancelClaim}
+              disabled={loading}
+              className="px-3 py-2 rounded-lg text-sm font-medium text-gray-500 border border-gray-200 hover:bg-gray-50 flex items-center gap-1"
+            >
+              <X size={14} /> Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between mt-2 pt-3 border-t border-gray-50">
+          <span className="text-xs font-medium text-gray-500 flex items-center gap-1 uppercase tracking-wide">
+            Status: <span className="text-brand-navy font-bold ml-1">{status.replace('_', ' ') || 'REPORTED'}</span>
+          </span>
+          {action && (
+            <button
+              onClick={handleAction}
+              disabled={loading}
+              className={`px-4 py-1.5 rounded-lg text-sm font-semibold text-white shadow-sm transition-all ${action.color} ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              {loading ? 'Updating...' : action.label}
+            </button>
+          )}
+          {status === 'in_progress' && (
+            <button
+              onClick={() => setClaiming(true)}
+              className="px-4 py-1.5 rounded-lg text-sm font-semibold text-white shadow-sm transition-all bg-green-600 hover:bg-green-700"
+            >
+              Claim Resolution
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 };
 
 export const OfficerLeadsBoard: React.FC<OfficerLeadsBoardProps> = ({ ward, circle }) => {
-  const [complaints, setComplaints] = useState<(Complaint & { status?: string; lead?: string })[]>([]);
+  const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [loading, setLoading] = useState(true);
 
   const scopeLabel = circle ? `Circle ${circle}` : `Ward ${ward}`;
 
-  const fetchComplaints = async () => {
+  const loadComplaints = async () => {
     if (!circle && !ward) {
       setLoading(false);
       return;
@@ -99,45 +238,62 @@ export const OfficerLeadsBoard: React.FC<OfficerLeadsBoardProps> = ({ ward, circ
       // Real, server-side scoping: ?circle= takes precedence over ?ward= so a
       // Ward Officer with a real GHMC circle assignment only ever sees their
       // own circle's complaints (Round 2 §2 — verified via WHERE circle = ?).
-      const query = circle ? `circle=${encodeURIComponent(circle)}` : `ward=${ward}`;
-      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173'}/api/complaints?${query}`);
-      if (res.ok) {
-        const data = await res.json();
-        // Sort by urgency roughly
-        const sorted = data.sort((a: any, b: any) => {
-          const uA = a.severity * 8 + Math.min(a.daysOpen, 30) * 2;
-          const uB = b.severity * 8 + Math.min(b.daysOpen, 30) * 2;
-          return uB - uA;
-        });
-        setComplaints(sorted.filter((c: any) => c.status !== 'resolved'));
-      }
+      const data = await fetchComplaints(circle ? { circle } : { ward });
+      const sorted = [...data].sort((a, b) => {
+        const uA = a.severity * 8 + Math.min(a.daysOpen, 30) * 2;
+        const uB = b.severity * 8 + Math.min(b.daysOpen, 30) * 2;
+        return uB - uA;
+      });
+      setComplaints(sorted.filter((c) => c.status !== 'resolved'));
+    } catch (error) {
+      console.error(error);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchComplaints();
+    loadComplaints();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ward, circle]);
 
   const handleStatusUpdate = async (id: string, newStatus: string) => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173'}/api/complaints/${id}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
-      });
-      if (res.ok) {
-        const updated = await res.json();
-        setComplaints(prev => prev.map(c => c.id === id ? updated : c).filter(c => c.status !== 'resolved'));
-      }
-    } catch (e) {
-      console.error(e);
+      const updated = await updateComplaintStatus(id, newStatus);
+      setComplaints((prev) => prev.map((c) => (c.id === id ? updated : c)).filter((c) => c.status !== 'resolved'));
+    } catch (error) {
+      console.error(error);
     }
   };
 
+  const handleClaimResolution = async (id: string, file: File) => {
+    // Upload the officer's own proof photo first (display/comparison only —
+    // POST .../verify never reads officer_proof, see server/index.mjs), then
+    // move the complaint into resolution_claimed. If either step fails, the
+    // complaint is left exactly where it was — no partial "claimed without
+    // photo" state is possible from this UI.
+    await uploadEvidence(id, file, 'officer_proof');
+    const updated = await updateComplaintStatus(id, 'resolution_claimed', 'Officer submitted proof of resolution.');
+    setComplaints((prev) => prev.map((c) => (c.id === id ? updated : c)));
+  };
+
   if (loading) {
-    return <div className="p-8 text-center text-gray-500 animate-pulse">Loading active leads...</div>;
+    return (
+      <div className="bg-gray-50 rounded-2xl shadow-inner border border-gray-100 overflow-hidden flex flex-col h-[500px]">
+        <div className="px-5 py-4 bg-white border-b border-gray-200">
+          <div className="h-4 w-40 bg-gray-100 rounded animate-pulse" />
+        </div>
+        <div className="flex-1 p-4 space-y-4">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="bg-white border border-gray-100 rounded-xl p-4 space-y-3 animate-pulse">
+              <div className="h-4 w-1/3 bg-gray-100 rounded" />
+              <div className="h-3 w-2/3 bg-gray-100 rounded" />
+              <div className="h-3 w-1/2 bg-gray-100 rounded" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -156,7 +312,7 @@ export const OfficerLeadsBoard: React.FC<OfficerLeadsBoardProps> = ({ ward, circ
           {complaints.length} ACTIVE
         </span>
       </div>
-      
+
       <div className="flex-1 overflow-y-auto p-4 space-y-4 relative">
         {complaints.length === 0 ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
@@ -167,8 +323,8 @@ export const OfficerLeadsBoard: React.FC<OfficerLeadsBoardProps> = ({ ward, circ
              <p className="text-sm text-gray-500 mt-1">No active leads for {scopeLabel}.</p>
           </div>
         ) : (
-          complaints.map(c => (
-            <LeadCard key={c.id} complaint={c} onStatusUpdate={handleStatusUpdate} />
+          complaints.map((c) => (
+            <LeadCard key={c.id} complaint={c} onStatusUpdate={handleStatusUpdate} onClaimResolution={handleClaimResolution} />
           ))
         )}
       </div>

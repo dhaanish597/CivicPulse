@@ -13,3 +13,4 @@ export { TrackMyReports } from './TrackMyReports';
 export { OfficerLeadsBoard } from './OfficerLeadsBoard';
 export { RoutePlanner } from './RoutePlanner';
 export { LocalIssuesMap } from './LocalIssuesMap';
+export { VerificationPanel } from './VerificationPanel';

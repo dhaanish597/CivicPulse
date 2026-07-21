@@ -1,5 +1,11 @@
-import React, { useEffect, useState } from 'react';
-import { Clock, CheckCircle, ArrowRight, Loader } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ArrowRight, Camera, CheckCircle, Clock, Loader, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { VerificationVerdict } from '../types';
+import { updateComplaintStatus, uploadEvidence, verifyResolution } from '../services';
+import { getCachedEvidenceUrls } from '../services/verificationService';
+import { VerificationPanel } from './VerificationPanel';
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173';
 
 interface TrackedReport {
   id: string;
@@ -12,7 +18,13 @@ interface ReportDetails {
   id: string;
   status: string;
   lead: string;
+  verificationStatus?: string;
+  verificationReasoning?: string;
   status_events: Array<{ status: string; actor: string; createdAt: string }>;
+}
+
+function isVerdict(value: string | undefined): value is VerificationVerdict {
+  return value === 'verified' || value === 'disputed' || value === 'inconclusive';
 }
 
 export const TrackMyReports: React.FC = () => {
@@ -28,7 +40,7 @@ export const TrackMyReports: React.FC = () => {
 
       const detailsMap: Record<string, ReportDetails> = {};
       for (const r of stored) {
-        const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173'}/api/complaints/${r.id}`);
+        const res = await fetch(`${API_BASE}/api/complaints/${r.id}`);
         if (res.ok) {
           detailsMap[r.id] = await res.json();
         }
@@ -38,6 +50,18 @@ export const TrackMyReports: React.FC = () => {
       console.error(e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const refetchDetail = async (id: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/complaints/${id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setDetails((prev) => ({ ...prev, [id]: data }));
+      }
+    } catch (e) {
+      console.error(e);
     }
   };
 
@@ -70,7 +94,19 @@ export const TrackMyReports: React.FC = () => {
       <div className="space-y-4">
         {reports.map(r => {
           const detail = details[r.id];
-          if (!detail) return null;
+
+          if (!detail) {
+            return (
+              <div key={r.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 animate-pulse space-y-3">
+                <div className="h-3 w-24 bg-gray-100 rounded" />
+                <div className="h-5 w-1/2 bg-gray-100 rounded" />
+                <div className="h-3 w-1/3 bg-gray-100 rounded" />
+              </div>
+            );
+          }
+
+          const showVerifyCard = detail.status === 'resolution_claimed';
+          const showVerificationHistory = !showVerifyCard && isVerdict(detail.verificationStatus);
 
           return (
             <div key={r.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden transition-all hover:shadow-md">
@@ -83,8 +119,9 @@ export const TrackMyReports: React.FC = () => {
                       <span className="w-2 h-2 rounded-full bg-gray-300"></span> {r.locality}
                     </p>
                   </div>
-                  <span className={`px-4 py-1.5 rounded-full text-xs font-semibold tracking-wide uppercase ${
+                  <span className={`px-4 py-1.5 rounded-full text-xs font-semibold tracking-wide uppercase whitespace-nowrap ${
                     detail.status === 'resolved' ? 'bg-green-100 text-green-700' :
+                    detail.status === 'resolution_claimed' ? 'bg-indigo-100 text-indigo-700' :
                     detail.status === 'in_progress' ? 'bg-amber-100 text-amber-700' :
                     detail.status === 'acknowledged' ? 'bg-blue-100 text-blue-700' :
                     'bg-gray-100 text-gray-700'
@@ -92,7 +129,27 @@ export const TrackMyReports: React.FC = () => {
                     {detail.status.replace('_', ' ')}
                   </span>
                 </div>
-                
+
+                {showVerifyCard && (
+                  <VerifyResolutionCard
+                    reportId={r.id}
+                    detail={detail}
+                    onVerified={() => refetchDetail(r.id)}
+                  />
+                )}
+
+                {showVerificationHistory && (
+                  <div className="mb-5">
+                    <VerificationPanel
+                      intakeImageUrl={getCachedEvidenceUrls(r.id).intake}
+                      proofImageUrl={getCachedEvidenceUrls(r.id).citizen_proof}
+                      proofLabel="Citizen's Counter-Evidence Photo"
+                      verdict={detail.verificationStatus as VerificationVerdict}
+                      reasoning={detail.verificationReasoning}
+                    />
+                  </div>
+                )}
+
                 {detail.lead && (
                   <div className="bg-gradient-to-r from-teal-50 to-emerald-50 border border-teal-100 rounded-xl p-4 mb-5 shadow-inner">
                     <p className="text-sm text-teal-800 flex items-start gap-3">
@@ -102,19 +159,29 @@ export const TrackMyReports: React.FC = () => {
                   </div>
                 )}
 
+                {/* Fixed w-20/shrink-0 on each step, plus a fixed connector width below
+                    the sm breakpoint, force real horizontal scrolling on narrow screens
+                    instead of flex-shrinking labels into each other — with
+                    'resolution_claimed' now a possible extra step (Task 3), 4-5 steps no
+                    longer reliably fit a 375px width the way the original 2-3 did. */}
                 <div className="flex gap-0 mt-6 items-center overflow-x-auto pb-2 px-2">
                   {detail.status_events.map((evt, idx) => (
                     <React.Fragment key={evt.createdAt}>
-                      <div className="flex flex-col items-center min-w-[80px]">
+                      <div className="flex flex-col items-center w-20 shrink-0">
                         <div className={`w-8 h-8 rounded-full flex items-center justify-center shadow-sm z-10 ${
                           detail.status === 'resolved' || idx < detail.status_events.length - 1 ? 'bg-brand-teal text-white' : 'bg-brand-terracotta text-white'
                         }`}>
                           <CheckCircle size={16} strokeWidth={3} />
                         </div>
-                        <span className="text-xs font-medium text-gray-600 mt-2 uppercase tracking-wide text-center">{evt.status.replace('_', ' ')}</span>
+                        {/* w-20 (fixed, not min-w) forces long labels like "RESOLUTION
+                            CLAIMED" to wrap onto a second line within their own step
+                            instead of growing past it and butting into the next one —
+                            the bug this fixes only became visible once Task 3 added a
+                            4th/5th possible step to a stepper that used to max out at 3. */}
+                        <span className="text-xs font-medium text-gray-600 mt-2 uppercase tracking-wide text-center leading-tight">{evt.status.replace('_', ' ')}</span>
                       </div>
                       {idx < detail.status_events.length - 1 && (
-                        <div className="flex-1 h-1 bg-brand-teal -mt-6 rounded-full mx-[-20px]" />
+                        <div className="w-10 shrink-0 sm:w-auto sm:shrink sm:flex-1 h-1 bg-brand-teal -mt-6 rounded-full mx-[-20px]" />
                       )}
                     </React.Fragment>
                   ))}
@@ -124,6 +191,170 @@ export const TrackMyReports: React.FC = () => {
           );
         })}
       </div>
+    </div>
+  );
+};
+
+interface VerifyResolutionCardProps {
+  reportId: string;
+  detail: ReportDetails;
+  onVerified: () => Promise<void>;
+}
+
+/**
+ * The citizen-facing half of the verification loop. Gates "Confirm fixed" /
+ * "Still not fixed" behind an actually-successful citizen_proof upload, so a
+ * click can never hit the backend's "no citizen_proof evidence" 400 in the
+ * normal flow (Task 3 brief). Both buttons call the same POST .../verify —
+ * the verdict always comes from the agent, never from which button was
+ * pressed. That's a deliberate product decision worth flagging: the buttons
+ * only capture citizen *intent/framing* for the note attached to this
+ * action, they cannot override the model. See task-3-report.md.
+ */
+const VerifyResolutionCard: React.FC<VerifyResolutionCardProps> = ({ reportId, detail, onVerified }) => {
+  const cached = getCachedEvidenceUrls(reportId);
+  const [citizenProofUrl, setCitizenProofUrl] = useState<string | undefined>(cached.citizen_proof);
+  const [uploading, setUploading] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const [verifyError, setVerifyError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = async (file: File) => {
+    setUploading(true);
+    setUploadError('');
+    try {
+      const evidence = await uploadEvidence(reportId, file, 'citizen_proof');
+      setCitizenProofUrl(evidence.imageUrl);
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'Unable to upload your photo.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // Both "Confirm fixed" and "Still not fixed" call this exact same function
+  // — POST .../verify takes no body (Task 2's contract), and the verdict is
+  // always the agent's independent read of the two photos, never something
+  // either button can steer. The two buttons exist purely so the citizen can
+  // register their own expectation before seeing the agent's answer; there
+  // is currently no field to send that framing to the backend, so nothing is
+  // silently invented here — see task-3-report.md "Concerns" for why this
+  // is flagged rather than assumed.
+  const handleVerify = async () => {
+    if (!citizenProofUrl || verifying) return;
+    setVerifying(true);
+    setVerifyError('');
+    try {
+      const result = await verifyResolution(reportId);
+
+      if (result.verdict === 'verified') {
+        // POST .../verify persists the verdict but does not itself close the
+        // complaint — server/agents/verificationAgent.mjs only auto-transitions
+        // status on a 'disputed' verdict (reopen). Closing the loop on a
+        // genuine 'verified' result is done here, via the same PATCH
+        // .../status contract the officer's claim flow uses. It succeeds
+        // because verification_status is now 'verified', satisfying the
+        // 409 gate that blocks any other path to 'resolved'.
+        await updateComplaintStatus(reportId, 'resolved', 'Verified via citizen counter-evidence.');
+      }
+
+      await onVerified();
+    } catch (error) {
+      setVerifyError(error instanceof Error ? error.message : 'Unable to verify this resolution.');
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  return (
+    <div className="bg-gradient-to-br from-teal-50 to-white border-2 border-teal-100 rounded-2xl p-5 mb-5 space-y-4">
+      <div>
+        <h4 className="font-bold text-brand-navy text-lg">Verify this fix</h4>
+        <p className="text-sm text-gray-600 mt-1">
+          An officer says this issue has been resolved. Upload your own photo to confirm it — only your
+          independent photo can close this complaint out.
+        </p>
+      </div>
+
+      {detail.verificationStatus === 'inconclusive' && detail.verificationReasoning && (
+        <div className="bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 text-xs text-amber-800">
+          Previous attempt was inconclusive: {detail.verificationReasoning} Try uploading a clearer photo.
+        </div>
+      )}
+
+      <VerificationPanel
+        intakeImageUrl={cached.intake}
+        proofImageUrl={cached.officer_proof}
+        proofLabel="Officer's Proof Photo"
+        loading={verifying}
+      />
+
+      <div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => e.target.files && handleFile(e.target.files[0])}
+        />
+        {citizenProofUrl ? (
+          <div className="flex items-center gap-3 bg-white rounded-lg border border-gray-100 p-2">
+            <img src={citizenProofUrl} alt="Your uploaded proof" className="w-14 h-14 rounded-md object-cover shrink-0" />
+            <div className="flex-1">
+              <p className="text-sm font-medium text-brand-navy">Your photo is ready to submit</p>
+              <button type="button" onClick={() => fileInputRef.current?.click()} className="text-xs text-brand-teal hover:underline">
+                Replace photo
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="w-full border-2 border-dashed border-teal-200 rounded-xl py-5 text-sm font-medium text-brand-teal hover:bg-teal-50 transition-colors flex flex-col items-center gap-1.5 disabled:opacity-60"
+          >
+            {uploading ? <Loader className="animate-spin" size={20} /> : <Camera size={20} />}
+            {uploading ? 'Uploading...' : 'Upload your photo'}
+          </button>
+        )}
+        {uploadError && <p className="text-xs text-red-600 mt-2">{uploadError}</p>}
+      </div>
+
+      {verifyError && (
+        <div className="bg-red-50 border border-red-100 rounded-lg px-3 py-2 text-sm text-red-700">{verifyError}</div>
+      )}
+
+      <div className="flex gap-3">
+        <button
+          type="button"
+          onClick={() => handleVerify()}
+          disabled={!citizenProofUrl || verifying}
+          className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
+            !citizenProofUrl || verifying
+              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+              : 'bg-green-600 text-white hover:bg-green-700 shadow-sm'
+          }`}
+        >
+          <ThumbsUp size={16} /> Confirm fixed
+        </button>
+        <button
+          type="button"
+          onClick={() => handleVerify()}
+          disabled={!citizenProofUrl || verifying}
+          className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
+            !citizenProofUrl || verifying
+              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+              : 'bg-red-600 text-white hover:bg-red-700 shadow-sm'
+          }`}
+        >
+          <ThumbsDown size={16} /> Still not fixed
+        </button>
+      </div>
+      {!citizenProofUrl && (
+        <p className="text-xs text-gray-400 text-center -mt-2">Upload your photo above to enable these actions.</p>
+      )}
     </div>
   );
 };
