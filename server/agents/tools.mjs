@@ -6,7 +6,7 @@ import {
   forecastNext7Days,
   getNearbyIssues,
 } from '../analytics.mjs';
-import { listComplaints, getComplaintById, listStatusEvents } from '../db.mjs';
+import { listComplaints, getComplaintById, listStatusEvents, getDisputedClosures } from '../db.mjs';
 
 export const toolDeclarations = [
   {
@@ -88,6 +88,28 @@ export const toolDeclarations = [
       required: ['origin', 'destination'],
     },
   },
+  {
+    name: 'get_verification_status',
+    description: 'Get the resolution-verification status, reasoning, and verified timestamp for a specific complaint.',
+    parameters: {
+      type: 'object',
+      properties: {
+        complaint_id: { type: 'string', description: 'The CMP-XXXX ID of the complaint.' },
+      },
+      required: ['complaint_id'],
+    },
+  },
+  {
+    name: 'get_disputed_closures',
+    description: 'Get complaints whose officer-claimed resolution was disputed by AI verification (proof photos did not hold up), optionally scoped to a GHMC circle.',
+    parameters: {
+      type: 'object',
+      properties: {
+        circle: { type: 'string', description: 'Optional GHMC circle name to scope results.' },
+        limit: { type: 'number', description: 'Maximum results to return. Default 10.' },
+      },
+    },
+  },
 ];
 
 export async function executeTool(name, args = {}) {
@@ -152,12 +174,25 @@ export async function executeTool(name, args = {}) {
       if (!dLat || !dLng) return { error: `Could not resolve destination location: ${args.destination}` };
 
       const result = await runRouteAdvisor(oLat, oLng, dLat, dLng);
-      return { 
-        riskScore: result.riskScore, 
+      return {
+        riskScore: result.riskScore,
         advisory: result.advisory,
         flaggedComplaintsCount: result.flaggedComplaints.length
       };
     }
+
+    case 'get_verification_status': {
+      const complaint = getComplaintById(args.complaint_id);
+      if (!complaint) return { error: `Complaint ${args.complaint_id} not found.` };
+      return {
+        verification_status: complaint.verificationStatus,
+        verification_reasoning: complaint.verificationReasoning ?? null,
+        verified_at: complaint.verifiedAt ?? null,
+      };
+    }
+
+    case 'get_disputed_closures':
+      return getDisputedClosures({ circle: args.circle, limit: Number(args.limit) || 10 });
 
     default: {
       const error = new Error(`Unknown tool: ${name}`);

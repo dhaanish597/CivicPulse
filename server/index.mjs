@@ -1,6 +1,8 @@
 import dotenv from 'dotenv';
 import express from 'express';
 import cors from 'cors';
+import multer from 'multer';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -13,16 +15,58 @@ import {
 import { answerWithTools } from './agents/conversationalAgent.mjs';
 import { runPipeline } from './agents/orchestrator.mjs';
 import { loadWardReference } from './data/localities.mjs';
-import { listComplaints, getComplaintById, listStatusEvents } from './db.mjs';
+import {
+  listComplaints,
+  getComplaintById,
+  listStatusEvents,
+  insertEvidence,
+  getLatestEvidenceByKind,
+  getLatestProofEvidence,
+  updateVerification,
+  getVerificationStats,
+} from './db.mjs';
 import { classifyImage } from './nvidia.mjs';
 import { runResolution } from './agents/resolutionAgent.mjs';
 import { runRouteAdvisor } from './agents/routeAgent.mjs';
+import { runVerification } from './agents/verificationAgent.mjs';
 import { seedIfEmpty } from './seed.mjs';
 import { startTelegramBot } from './telegramBot.mjs';
-import { getStatus, normalizeImageInput, redactError } from './utils.mjs';
+import { generateId, getStatus, normalizeImageInput, redactError } from './utils.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
+const uploadsDir = path.join(__dirname, 'uploads');
+fs.mkdirSync(uploadsDir, { recursive: true });
+
+const EVIDENCE_KINDS = ['intake', 'officer_proof', 'citizen_proof'];
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, uploadsDir),
+    filename: (_req, file, cb) => {
+      const ext = extFromMime(file.mimetype) || path.extname(file.originalname) || '.jpg';
+      cb(null, `${generateId('EVD')}${ext}`);
+    },
+  }),
+  limits: { fileSize: 4 * 1024 * 1024 }, // ~4MB cap, per task-2 brief Step 2
+  fileFilter: (_req, file, cb) => {
+    if (!file.mimetype || !file.mimetype.startsWith('image/')) {
+      const error = new Error('Only image uploads are allowed.');
+      error.status = 400;
+      return cb(error);
+    }
+    cb(null, true);
+  },
+});
+
+function extFromMime(mimeType) {
+  const map = {
+    'image/jpeg': '.jpg',
+    'image/png': '.png',
+    'image/webp': '.webp',
+    'image/gif': '.gif',
+  };
+  return map[mimeType] ?? null;
+}
 
 dotenv.config({ path: path.join(root, '.env'), quiet: true });
 seedIfEmpty();
@@ -38,6 +82,10 @@ app.use(express.json({ limit: '16mb' }));
 app.use(cors({
   origin: process.env.ALLOWED_ORIGIN || (process.env.NODE_ENV === 'production' ? false : '*'),
 }));
+
+// Serves uploaded evidence photos (server/uploads/) so they're viewable by URL —
+// e.g. by the verificationAgent's own vision call and, later, the Task 3 frontend.
+app.use('/uploads', express.static(uploadsDir));
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
@@ -76,18 +124,117 @@ app.patch('/api/complaints/:id/status', async (req, res) => {
   try {
     const complaint = getComplaintById(req.params.id);
     if (!complaint) return res.status(404).json({ error: 'Not found' });
-    
+
     const { status, note } = req.body;
-    if (!['reported', 'acknowledged', 'in_progress', 'resolved'].includes(status)) {
+    if (!['reported', 'acknowledged', 'in_progress', 'resolution_claimed', 'resolved'].includes(status)) {
       return res.status(400).json({ error: 'Invalid status' });
     }
 
+    // Task 2: an officer can no longer close a complaint themselves — closing
+    // requires a prior 'verified' verdict from the verification agent.
+    if (status === 'resolved' && complaint.verificationStatus !== 'verified') {
+      return res.status(409).json({
+        error: 'Cannot close a complaint without verified proof of resolution.',
+        verification_status: complaint.verificationStatus,
+      });
+    }
+
     await runResolution(complaint, status, 'officer', note);
+
+    // Claiming a resolution starts the verification cycle — evidence isn't
+    // submitted yet, so the complaint is now explicitly awaiting proof.
+    if (status === 'resolution_claimed') {
+      updateVerification(req.params.id, { verificationStatus: 'awaiting_proof', verifiedAt: null });
+    }
+
     res.json(getComplaintById(req.params.id));
   } catch (error) {
     console.error('PATCH /api/complaints/:id/status failed:', redactError(error));
     res.status(500).json({ error: 'Update failed' });
   }
+});
+
+app.post('/api/complaints/:id/evidence', (req, res) => {
+  upload.single('image')(req, res, (uploadError) => {
+    if (uploadError) {
+      const status = uploadError.code === 'LIMIT_FILE_SIZE' ? 413 : getStatus(uploadError);
+      const message = uploadError.code === 'LIMIT_FILE_SIZE'
+        ? 'Image exceeds the 4MB upload limit.'
+        : uploadError.message || 'Unable to upload evidence image.';
+      return res.status(status).json({ error: message });
+    }
+
+    try {
+      const complaint = getComplaintById(req.params.id);
+      if (!complaint) return res.status(404).json({ error: 'Not found' });
+
+      if (!req.file) {
+        return res.status(400).json({ error: 'An image file is required.' });
+      }
+
+      const kind = req.body?.kind;
+      if (!EVIDENCE_KINDS.includes(kind)) {
+        return res.status(400).json({ error: `kind must be one of ${EVIDENCE_KINDS.join(', ')}.` });
+      }
+
+      const submittedBy = typeof req.body?.submitted_by === 'string' && req.body.submitted_by.trim()
+        ? req.body.submitted_by.trim()
+        : (kind === 'citizen_proof' ? 'citizen' : 'officer');
+
+      const row = insertEvidence({
+        id: generateId('EVD'),
+        complaintId: req.params.id,
+        kind,
+        imagePath: `/uploads/${req.file.filename}`,
+        submittedBy,
+      });
+
+      res.status(201).json(row);
+    } catch (error) {
+      console.error('POST /api/complaints/:id/evidence failed:', redactError(error));
+      res.status(getStatus(error)).json({ error: 'Unable to save evidence.' });
+    }
+  });
+});
+
+app.post('/api/complaints/:id/verify', async (req, res) => {
+  try {
+    const complaint = getComplaintById(req.params.id);
+    if (!complaint) return res.status(404).json({ error: 'Not found' });
+
+    const intake = getLatestEvidenceByKind(req.params.id, 'intake');
+    const proof = getLatestProofEvidence(req.params.id);
+
+    if (!intake || !proof) {
+      return res.status(400).json({
+        error: 'Both intake evidence and proof evidence (officer_proof or citizen_proof) are required before verification.',
+      });
+    }
+
+    const result = await runVerification(complaint, intake.imagePath, proof.imagePath);
+
+    updateVerification(req.params.id, {
+      verificationStatus: result.verdict,
+      verificationReasoning: result.reasoning,
+      verifiedAt: new Date().toISOString(),
+    });
+
+    const updated = getComplaintById(req.params.id);
+
+    res.json({
+      verdict: result.verdict,
+      confidence: result.confidence,
+      reasoning: result.reasoning,
+      newStatus: updated.status,
+    });
+  } catch (error) {
+    console.error('POST /api/complaints/:id/verify failed:', redactError(error));
+    res.status(getStatus(error)).json({ error: 'Verification failed.' });
+  }
+});
+
+app.get('/api/verification-stats', (_req, res) => {
+  res.json(getVerificationStats());
 });
 
 app.post('/api/route-check', async (req, res) => {

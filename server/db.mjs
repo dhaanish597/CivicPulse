@@ -108,6 +108,35 @@ export function initSchema(database = getDb()) {
     CREATE INDEX IF NOT EXISTS idx_complaints_status ON complaints(status);
   `);
 
+  // Round 2 Task 2: resolution verification (ROUND2.md §2 headline feature).
+  // Same PRAGMA table_info guard pattern as the zone/circle/ward_name migration
+  // above, so restarting against an existing DB is safe and idempotent.
+  const verificationCols = database.prepare("PRAGMA table_info(complaints)").all();
+  if (!verificationCols.some((c) => c.name === 'verification_status')) {
+    database.exec(`
+      ALTER TABLE complaints ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'not_required';
+      ALTER TABLE complaints ADD COLUMN verification_reasoning TEXT;
+      ALTER TABLE complaints ADD COLUMN verified_at TEXT;
+
+      UPDATE complaints SET verification_status = 'unverified'
+        WHERE status = 'resolved' AND verification_status = 'not_required';
+    `);
+  }
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS evidence (
+      id TEXT PRIMARY KEY,
+      complaint_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      image_path TEXT NOT NULL,
+      submitted_by TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_evidence_complaint_id ON evidence (complaint_id);
+    CREATE INDEX IF NOT EXISTS idx_complaints_verification_status ON complaints (verification_status);
+  `);
+
   populateWardReferenceTable(database);
 }
 
@@ -156,6 +185,18 @@ export function getComplaintById(id, database = getDb()) {
 export function insertComplaint(complaint, database = getDb()) {
   const locality = complaint.locality || getLocalityByWard(complaint.ward).locality;
   const status = complaint.status || (complaint.resolved ? 'resolved' : 'reported');
+  // Mirrors the one-time migration backfill in initSchema() (`verification_status =
+  // 'unverified' WHERE status = 'resolved' AND verification_status = 'not_required'`)
+  // at the insertion chokepoint itself. That migration only ever runs once, against
+  // whatever rows already exist in the table at that moment — it can't retroactively
+  // catch rows inserted afterward in the same process (e.g. seed.mjs's seedIfEmpty()
+  // runs immediately after initSchema() on a fresh DB, so its synthetic 'resolved'
+  // rows would otherwise land on the raw column DEFAULT of 'not_required' instead of
+  // 'unverified'). Any caller can still override by passing verificationStatus
+  // explicitly.
+  const verificationStatus = complaint.verificationStatus
+    ?? complaint.verification_status
+    ?? (status === 'resolved' ? 'unverified' : 'not_required');
   const row = {
     id: complaint.id,
     ward: complaint.ward,
@@ -176,6 +217,7 @@ export function insertComplaint(complaint, database = getDb()) {
     zone: complaint.zone ?? null,
     circle: complaint.circle ?? null,
     ward_name: complaint.wardName ?? complaint.ward_name ?? null,
+    verification_status: verificationStatus,
   };
 
   database
@@ -183,11 +225,11 @@ export function insertComplaint(complaint, database = getDb()) {
       INSERT INTO complaints (
         id, ward, locality, category, severity, reported_at, resolved, days_open,
         lat, lng, source, description, reasoning, status, lead, status_updated_at,
-        zone, circle, ward_name
+        zone, circle, ward_name, verification_status
       ) VALUES (
         @id, @ward, @locality, @category, @severity, @reported_at, @resolved,
         @days_open, @lat, @lng, @source, @description, @reasoning, @status, @lead, @status_updated_at,
-        @zone, @circle, @ward_name
+        @zone, @circle, @ward_name, @verification_status
       )
     `)
     .run(row);
@@ -209,6 +251,40 @@ export function updateComplaintStatus(id, updates, database = getDb()) {
     SET status = @status, lead = COALESCE(@lead, lead), status_updated_at = @status_updated_at, resolved = @resolved
     WHERE id = @id
   `).run(row);
+}
+
+export function updateVerification(id, updates, database = getDb()) {
+  const row = {
+    id,
+    verification_status: updates.verificationStatus,
+    verification_reasoning: updates.verificationReasoning ?? null,
+    verified_at: updates.verifiedAt ?? new Date().toISOString(),
+  };
+
+  database.prepare(`
+    UPDATE complaints
+    SET verification_status = @verification_status,
+        verification_reasoning = @verification_reasoning,
+        verified_at = @verified_at
+    WHERE id = @id
+  `).run(row);
+
+  return getComplaintById(id, database);
+}
+
+// Fixed escalation applied when a claimed resolution is disputed (Round 2 Task 2,
+// server/agents/verificationAgent.mjs). Severity is the dominant weighted term in
+// analytics.mjs#scoreUrgency (severity * 8 vs. daysOpen * 2 and recurrence * 1.5),
+// so bumping it by a documented +1 (capped at 5) makes the dispute's urgency
+// escalation durable and visible anywhere scoreUrgency is recomputed (dispatch
+// list, forecast, etc.) without needing a persisted urgency column that doesn't
+// otherwise exist on this table. See task-2-report.md for the full rationale.
+export function escalateSeverity(id, database = getDb()) {
+  database.prepare(`
+    UPDATE complaints SET severity = MIN(severity + 1, 5) WHERE id = ?
+  `).run(id);
+
+  return getComplaintById(id, database);
 }
 
 export function insertAgentTrace(trace, database = getDb()) {
@@ -271,6 +347,117 @@ export function clearSeedData(database = getDb()) {
   database.exec('DELETE FROM agent_traces; DELETE FROM complaints;');
 }
 
+export function insertEvidence(evidence, database = getDb()) {
+  const row = {
+    id: evidence.id,
+    complaint_id: evidence.complaintId,
+    kind: evidence.kind,
+    image_path: evidence.imagePath,
+    submitted_by: evidence.submittedBy,
+    created_at: evidence.createdAt ?? new Date().toISOString(),
+  };
+
+  database.prepare(`
+    INSERT INTO evidence (id, complaint_id, kind, image_path, submitted_by, created_at)
+    VALUES (@id, @complaint_id, @kind, @image_path, @submitted_by, @created_at)
+  `).run(row);
+
+  return rowToEvidence(row);
+}
+
+export function listEvidence(complaintId, database = getDb()) {
+  return database
+    .prepare('SELECT * FROM evidence WHERE complaint_id = ? ORDER BY created_at ASC')
+    .all(complaintId)
+    .map(rowToEvidence);
+}
+
+// Latest evidence row of exactly one kind (used for 'intake').
+export function getLatestEvidenceByKind(complaintId, kind, database = getDb()) {
+  const row = database
+    .prepare('SELECT * FROM evidence WHERE complaint_id = ? AND kind = ? ORDER BY created_at DESC LIMIT 1')
+    .get(complaintId, kind);
+  return row ? rowToEvidence(row) : null;
+}
+
+// Latest evidence row across officer_proof OR citizen_proof — whichever proof was
+// submitted most recently is the freshest evidence being adjudicated (mirrors the
+// task-2 brief's "latest officer_proof/citizen_proof row" phrasing). See
+// verificationAgent.mjs / task-2-report.md for the full rationale.
+export function getLatestProofEvidence(complaintId, database = getDb()) {
+  const row = database
+    .prepare(`
+      SELECT * FROM evidence
+      WHERE complaint_id = ? AND kind IN ('officer_proof', 'citizen_proof')
+      ORDER BY created_at DESC LIMIT 1
+    `)
+    .get(complaintId);
+  return row ? rowToEvidence(row) : null;
+}
+
+export function getVerificationStats(database = getDb()) {
+  const rows = database
+    .prepare('SELECT verification_status, COUNT(*) AS count FROM complaints GROUP BY verification_status')
+    .all();
+
+  const counts = {
+    not_required: 0,
+    awaiting_proof: 0,
+    verified: 0,
+    disputed: 0,
+    inconclusive: 0,
+    unverified: 0,
+  };
+
+  rows.forEach((row) => {
+    counts[row.verification_status] = row.count;
+  });
+
+  const verifiedOrDisputed = counts.verified + counts.disputed;
+  const disputedRate = verifiedOrDisputed > 0 ? round4(counts.disputed / verifiedOrDisputed) : 0;
+
+  return {
+    counts,
+    disputed_rate: disputedRate,
+    unverified_legacy_count: counts.unverified,
+  };
+}
+
+export function getDisputedClosures({ circle, limit = 10 } = {}, database = getDb()) {
+  const where = ["verification_status = 'disputed'"];
+  const params = {};
+
+  if (circle) {
+    where.push('circle = @circle');
+    params.circle = String(circle);
+  }
+
+  params.limit = Number(limit) || 10;
+
+  const rows = database
+    .prepare(`
+      SELECT id, category, circle, ward_name, verification_reasoning, verified_at
+      FROM complaints
+      WHERE ${where.join(' AND ')}
+      ORDER BY verified_at DESC
+      LIMIT @limit
+    `)
+    .all(params);
+
+  return rows.map((row) => ({
+    complaint_id: row.id,
+    category: row.category,
+    circle: row.circle,
+    ward_name: row.ward_name,
+    verification_reasoning: row.verification_reasoning,
+    verified_at: row.verified_at,
+  }));
+}
+
+function round4(value) {
+  return Number(value.toFixed(4));
+}
+
 export function dbTransaction(fn, database = getDb()) {
   return database.transaction(fn)();
 }
@@ -305,6 +492,9 @@ export function rowToComplaint(row) {
     zone: row.zone ?? undefined,
     circle: row.circle ?? undefined,
     wardName: row.ward_name ?? undefined,
+    verificationStatus: row.verification_status ?? 'not_required',
+    verificationReasoning: row.verification_reasoning ?? undefined,
+    verifiedAt: row.verified_at ?? undefined,
   };
 }
 
@@ -315,6 +505,17 @@ function rowToTrace(row) {
     stepName: row.step_name,
     stepOrder: row.step_order,
     detail: row.detail,
+    createdAt: row.created_at,
+  };
+}
+
+function rowToEvidence(row) {
+  return {
+    id: row.id,
+    complaintId: row.complaint_id,
+    kind: row.kind,
+    imagePath: row.image_path,
+    submittedBy: row.submitted_by,
     createdAt: row.created_at,
   };
 }

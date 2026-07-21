@@ -107,7 +107,7 @@ function buildClassificationPrompt(textNote) {
   ].join('\n');
 }
 
-function stripCodeFence(text) {
+export function stripCodeFence(text) {
   return text
     .trim()
     .replace(/^```(?:json)?\s*/i, '')

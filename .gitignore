@@ -23,3 +23,6 @@ dist-ssr
 .env
 
 .vercel
+
+# Round 2 Task 2: uploaded evidence photos (server/index.mjs multer storage)
+server/uploads
