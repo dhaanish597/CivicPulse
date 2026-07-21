@@ -92,6 +92,43 @@ export async function fetchVerificationStats(): Promise<VerificationStats> {
   return response.json();
 }
 
+/**
+ * GET /api/complaints/:id/evidence (Fix round 1, Finding 2) — the real,
+ * server-backed source of a complaint's evidence photos. Returns every
+ * evidence row for the complaint, oldest to newest, same per-row shape as
+ * POST .../evidence's response. Unlike the localStorage cache below, this
+ * works from a fresh page load or a completely different browser/device,
+ * since it reads the `evidence` table directly rather than only what this
+ * browser happened to upload or receive.
+ */
+export async function fetchEvidence(complaintId: string): Promise<EvidenceRecord[]> {
+  const response = await fetch(`${API_BASE}/api/complaints/${complaintId}/evidence`);
+  if (!response.ok) {
+    throw new VerificationApiError(await readError(response), response.status);
+  }
+
+  const rows: Array<{ id: string | number; kind: EvidenceKind; imagePath: string; submittedBy: string; createdAt: string }> = await response.json();
+
+  return rows.map((row) => ({
+    id: String(row.id),
+    complaintId,
+    kind: row.kind,
+    imagePath: row.imagePath,
+    imageUrl: buildEvidenceUrl(row.imagePath),
+    submittedBy: row.submittedBy,
+    createdAt: row.createdAt,
+  }));
+}
+
+/** Reduces a list of evidence records (oldest-to-newest, as fetchEvidence returns) to the latest image URL per kind — what every VerificationPanel caller actually wants. */
+export function pickLatestEvidenceByKind(records: EvidenceRecord[]): Partial<Record<EvidenceKind, string>> {
+  const result: Partial<Record<EvidenceKind, string>> = {};
+  for (const record of records) {
+    result[record.kind] = record.imageUrl;
+  }
+  return result;
+}
+
 async function readError(response: Response): Promise<string> {
   try {
     const data = await response.json();

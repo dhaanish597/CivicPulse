@@ -18,8 +18,10 @@ export {
   VerificationApiError,
   buildEvidenceUrl,
   cacheEvidenceUrl,
+  fetchEvidence,
   fetchVerificationStats,
   getCachedEvidenceUrls,
+  pickLatestEvidenceByKind,
   uploadEvidence,
   verifyResolution,
 } from './verificationService';

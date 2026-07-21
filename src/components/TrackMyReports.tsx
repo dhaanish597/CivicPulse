@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ArrowRight, Camera, CheckCircle, Clock, Loader, ThumbsDown, ThumbsUp } from 'lucide-react';
-import { VerificationVerdict } from '../types';
+import { EvidenceKind, VerificationVerdict } from '../types';
 import { updateComplaintStatus, uploadEvidence, verifyResolution } from '../services';
-import { getCachedEvidenceUrls } from '../services/verificationService';
+import { fetchEvidence, getCachedEvidenceUrls, pickLatestEvidenceByKind } from '../services/verificationService';
 import { VerificationPanel } from './VerificationPanel';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173';
@@ -30,6 +30,12 @@ function isVerdict(value: string | undefined): value is VerificationVerdict {
 export const TrackMyReports: React.FC = () => {
   const [reports, setReports] = useState<TrackedReport[]>([]);
   const [details, setDetails] = useState<Record<string, ReportDetails>>({});
+  // Evidence photo URLs per report, keyed by report id (Fix round 1, Finding
+  // 2). Sourced primarily from a live GET .../evidence fetch — the
+  // cross-device/cross-browser source of truth — seeded from this-session's
+  // localStorage cache first so a photo this same browser just
+  // uploaded/received shows instantly without waiting on the round trip.
+  const [evidence, setEvidence] = useState<Record<string, Partial<Record<EvidenceKind, string>>>>({});
   const [loading, setLoading] = useState(false);
 
   const fetchReports = async () => {
@@ -39,13 +45,26 @@ export const TrackMyReports: React.FC = () => {
       setReports(stored);
 
       const detailsMap: Record<string, ReportDetails> = {};
+      const evidenceMap: Record<string, Partial<Record<EvidenceKind, string>>> = {};
       for (const r of stored) {
         const res = await fetch(`${API_BASE}/api/complaints/${r.id}`);
         if (res.ok) {
           detailsMap[r.id] = await res.json();
         }
+
+        evidenceMap[r.id] = { ...getCachedEvidenceUrls(r.id) };
+        try {
+          const records = await fetchEvidence(r.id);
+          evidenceMap[r.id] = { ...evidenceMap[r.id], ...pickLatestEvidenceByKind(records) };
+        } catch (e) {
+          // Live evidence fetch failed — fall back to whatever the
+          // same-session cache already had (may be nothing, in which case
+          // VerificationPanel renders its normal empty-state placeholder).
+          console.error(e);
+        }
       }
       setDetails(detailsMap);
+      setEvidence(evidenceMap);
     } catch (e) {
       console.error(e);
     } finally {
@@ -60,6 +79,17 @@ export const TrackMyReports: React.FC = () => {
         const data = await res.json();
         setDetails((prev) => ({ ...prev, [id]: data }));
       }
+    } catch (e) {
+      console.error(e);
+    }
+
+    // A verify action may have just uploaded new citizen_proof evidence —
+    // refresh this report's entry in the shared evidence map too, since the
+    // "verification record" panel below reads from it (not from
+    // VerifyResolutionCard's own local upload-preview state).
+    try {
+      const records = await fetchEvidence(id);
+      setEvidence((prev) => ({ ...prev, [id]: { ...prev[id], ...pickLatestEvidenceByKind(records) } }));
     } catch (e) {
       console.error(e);
     }
@@ -134,6 +164,7 @@ export const TrackMyReports: React.FC = () => {
                   <VerifyResolutionCard
                     reportId={r.id}
                     detail={detail}
+                    evidenceUrls={evidence[r.id] ?? {}}
                     onVerified={() => refetchDetail(r.id)}
                   />
                 )}
@@ -141,8 +172,8 @@ export const TrackMyReports: React.FC = () => {
                 {showVerificationHistory && (
                   <div className="mb-5">
                     <VerificationPanel
-                      intakeImageUrl={getCachedEvidenceUrls(r.id).intake}
-                      proofImageUrl={getCachedEvidenceUrls(r.id).citizen_proof}
+                      intakeImageUrl={evidence[r.id]?.intake}
+                      proofImageUrl={evidence[r.id]?.citizen_proof}
                       proofLabel="Citizen's Counter-Evidence Photo"
                       verdict={detail.verificationStatus as VerificationVerdict}
                       reasoning={detail.verificationReasoning}
@@ -198,6 +229,8 @@ export const TrackMyReports: React.FC = () => {
 interface VerifyResolutionCardProps {
   reportId: string;
   detail: ReportDetails;
+  /** Intake/officer_proof URLs for the comparison panel — from the parent's live-fetched evidence map (Fix round 1, Finding 2), not a local cache read. */
+  evidenceUrls: Partial<Record<EvidenceKind, string>>;
   onVerified: () => Promise<void>;
 }
 
@@ -211,9 +244,8 @@ interface VerifyResolutionCardProps {
  * only capture citizen *intent/framing* for the note attached to this
  * action, they cannot override the model. See task-3-report.md.
  */
-const VerifyResolutionCard: React.FC<VerifyResolutionCardProps> = ({ reportId, detail, onVerified }) => {
-  const cached = getCachedEvidenceUrls(reportId);
-  const [citizenProofUrl, setCitizenProofUrl] = useState<string | undefined>(cached.citizen_proof);
+const VerifyResolutionCard: React.FC<VerifyResolutionCardProps> = ({ reportId, detail, evidenceUrls, onVerified }) => {
+  const [citizenProofUrl, setCitizenProofUrl] = useState<string | undefined>(evidenceUrls.citizen_proof);
   const [uploading, setUploading] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [uploadError, setUploadError] = useState('');
@@ -284,8 +316,8 @@ const VerifyResolutionCard: React.FC<VerifyResolutionCardProps> = ({ reportId, d
       )}
 
       <VerificationPanel
-        intakeImageUrl={cached.intake}
-        proofImageUrl={cached.officer_proof}
+        intakeImageUrl={evidenceUrls.intake}
+        proofImageUrl={evidenceUrls.officer_proof}
         proofLabel="Officer's Proof Photo"
         loading={verifying}
       />

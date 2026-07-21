@@ -107,13 +107,33 @@ export const CityAdmin: React.FC<CityAdminProps> = ({ complaints }) => {
   // window; rather than inventing a new endpoint to support one, this uses
   // the honest all-time figure the given endpoint actually provides — see
   // task-3-report.md "Concerns" for the full note on this wording choice.
-  const closedCount = stats
-    ? stats.counts.verified + stats.counts.disputed + stats.counts.inconclusive + stats.counts.unverified
-    : 0;
+  //
+  // Fix round 1 (Finding 1): `closedCount` must only include verification
+  // statuses that actually correspond to a CLOSED (status === 'resolved')
+  // complaint. Tracing server/agents/verificationAgent.mjs: a 'disputed'
+  // verdict explicitly reopens the complaint to status 'in_progress', and an
+  // 'inconclusive' verdict leaves status untouched (typically still
+  // 'resolution_claimed') — neither is closed. Only 'verified' (the real
+  // adjudicated-and-closed case) and 'unverified' (the legacy pre-verification
+  // backfill bucket, also status 'resolved') correspond to a closed complaint
+  // — confirmed by the 409 gate on PATCH /:id/status, which only allows
+  // status 'resolved' when verification_status === 'verified' (plus the
+  // one-time migration backfill that set 'unverified' on already-resolved
+  // rows). Previously this summed in disputed + inconclusive too, which
+  // mislabeled open/reopened/pending complaints as "closures."
+  const closedCount = stats ? stats.counts.verified + stats.counts.unverified : 0;
   const unverifiedPct = stats && closedCount > 0
     ? Math.round((stats.counts.unverified / closedCount) * 100)
     : null;
   const unverifiedCount = stats?.counts.unverified ?? 0;
+  // disputed_rate (server/db.mjs#getVerificationStats) = disputed / (verified
+  // + disputed) — i.e., of complaints whose claimed resolution reached a
+  // verified-or-disputed VERDICT, what fraction ended in dispute. Disputed
+  // complaints are reopened, not closed (see closedCount above), so the prior
+  // caption "% of verified closures were disputed" was self-contradictory —
+  // 'verified' and 'disputed' are mutually exclusive terminal verdicts, a
+  // complaint can never be both. Captioned below to describe what the metric
+  // actually measures instead.
   const disputedRatePct = stats ? Math.round(stats.disputed_rate * 100) : 0;
 
   const unverifiedComplaints = useMemo(
@@ -151,7 +171,7 @@ export const CityAdmin: React.FC<CityAdminProps> = ({ complaints }) => {
             </div>
             <p className="text-sm text-white/50 mt-5">
               {unverifiedCount.toLocaleString()} of {closedCount.toLocaleString()} closures citywide have no counter-evidence on file
-              {disputedRatePct > 0 && ` · ${disputedRatePct}% of verified closures were disputed`}
+              {disputedRatePct > 0 && ` · ${disputedRatePct}% of adjudicated verifications ended in dispute`}
             </p>
             <button
               type="button"

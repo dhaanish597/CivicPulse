@@ -20,6 +20,7 @@ import {
   getComplaintById,
   listStatusEvents,
   insertEvidence,
+  listEvidence,
   getLatestEvidenceByKind,
   getLatestCitizenProofEvidence,
   updateVerification,
@@ -207,6 +208,24 @@ app.post('/api/complaints/:id/evidence', (req, res) => {
       res.status(getStatus(error)).json({ error: 'Unable to save evidence.' });
     }
   });
+});
+
+// Fix round 1 (Finding 2): Task 2 never built a way to list a complaint's
+// evidence from the server, so the Task 3 frontend was relying solely on a
+// client-side localStorage cache of URLs seen during the same browser
+// session — real evidence photos, but invisible to a second browser/device
+// (e.g. a judge opening the prototype cold) that didn't make the original
+// upload. Read-only and additive: returns the same per-row shape as POST
+// .../evidence's response ({ id, complaintId, kind, imagePath, submittedBy,
+// createdAt }), ordered oldest-to-newest same as listEvidence() elsewhere.
+// Does not touch what POST .../verify itself adjudicates (still only reads
+// intake + the latest citizen_proof via getLatestEvidenceByKind /
+// getLatestCitizenProofEvidence, untouched below).
+app.get('/api/complaints/:id/evidence', (req, res) => {
+  const complaint = getComplaintById(req.params.id);
+  if (!complaint) return res.status(404).json({ error: 'Not found' });
+
+  res.json(listEvidence(req.params.id));
 });
 
 app.post('/api/complaints/:id/verify', async (req, res) => {

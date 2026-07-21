@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Camera, CheckCircle, Activity, Lock, X } from 'lucide-react';
-import { Complaint } from '../types';
+import { Complaint, EvidenceKind } from '../types';
 import { categoryColors } from '../data/categoryColors';
 import { fetchComplaints, updateComplaintStatus } from '../services';
-import { getCachedEvidenceUrls, uploadEvidence } from '../services/verificationService';
+import { fetchEvidence, getCachedEvidenceUrls, pickLatestEvidenceByKind, uploadEvidence } from '../services/verificationService';
 import { VerificationPanel } from './VerificationPanel';
 
 interface OfficerLeadsBoardProps {
@@ -24,6 +24,36 @@ const LeadCard: React.FC<LeadCardProps> = ({ complaint, onStatusUpdate, onClaimR
   const [proofPreview, setProofPreview] = useState<string | null>(null);
   const [claimError, setClaimError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Evidence photo URLs (Fix round 1, Finding 2): seeded from this-session's
+  // localStorage cache for an instant same-session display (e.g. right after
+  // this officer's own claim-upload, before the round trip below resolves),
+  // then reconciled against a live GET .../evidence fetch — the real,
+  // cross-device/cross-browser source of truth. Re-runs on `complaint.status`
+  // too, so the moment a claim flips this card into the locked view, it
+  // re-reads the cache (which uploadEvidence() just wrote to) instead of a
+  // stale value captured before the claim happened.
+  const [evidenceUrls, setEvidenceUrls] = useState<Partial<Record<EvidenceKind, string>>>(
+    () => getCachedEvidenceUrls(complaint.id)
+  );
+
+  useEffect(() => {
+    setEvidenceUrls((prev) => ({ ...prev, ...getCachedEvidenceUrls(complaint.id) }));
+    let alive = true;
+    fetchEvidence(complaint.id)
+      .then((records) => {
+        if (!alive) return;
+        setEvidenceUrls((prev) => ({ ...prev, ...pickLatestEvidenceByKind(records) }));
+      })
+      .catch(() => {
+        // Live fetch failed (offline, server hiccup) — keep whatever the
+        // same-session cache already had; VerificationPanel's own empty-state
+        // placeholder covers the case where neither has anything.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [complaint.id, complaint.status]);
 
   const status = complaint.status || 'reported';
 
@@ -76,7 +106,6 @@ const LeadCard: React.FC<LeadCardProps> = ({ complaint, onStatusUpdate, onClaimR
   // own photo (uploaded from TrackMyReports) can move it forward, per
   // Task 2's hard backend rule (POST .../verify never reads officer_proof).
   if (status === 'resolution_claimed') {
-    const cached = getCachedEvidenceUrls(complaint.id);
     const verdict = complaint.verificationStatus === 'verified'
       || complaint.verificationStatus === 'disputed'
       || complaint.verificationStatus === 'inconclusive'
@@ -100,8 +129,8 @@ const LeadCard: React.FC<LeadCardProps> = ({ complaint, onStatusUpdate, onClaimR
         </div>
 
         <VerificationPanel
-          intakeImageUrl={cached.intake}
-          proofImageUrl={cached.officer_proof}
+          intakeImageUrl={evidenceUrls.intake}
+          proofImageUrl={evidenceUrls.officer_proof}
           proofLabel="Officer's Proof Photo"
           verdict={verdict}
           reasoning={complaint.verificationReasoning}
