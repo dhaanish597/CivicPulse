@@ -1,4 +1,4 @@
-import { getLocalityByName, getLocalityByWard, sources } from '../data/localities.mjs';
+import { getLocalityByName, getLocalityByWard, resolveWardForLocation, sources } from '../data/localities.mjs';
 import { normalizeImageInput } from '../utils.mjs';
 
 export function runIngestion(input) {
@@ -18,6 +18,13 @@ export function runIngestion(input) {
   const locality = resolveLocality(input);
   const coords = resolveCoordinates(input, locality);
   const source = sources.includes(input.source) ? input.source : 'Citizen App';
+  // Real GHMC circle/zone assignment is a separate, geographic lookup from the legacy
+  // ward/locality resolution above — see resolveWardForLocation() for why this can't be
+  // joined by ward number. Every new complaint gets a real, geographically-grounded
+  // zone/circle/ward_name here (or nulls when only the fallback demo table is loaded),
+  // so circle-scoped views (?circle=) see complaints reported through this pipeline,
+  // not just seeded historical rows.
+  const ghmcWard = resolveWardForLocation(coords.lat, coords.lng);
 
   return {
     textNote,
@@ -26,6 +33,9 @@ export function runIngestion(input) {
     locality: locality.locality,
     lat: coords.lat,
     lng: coords.lng,
+    zone: ghmcWard.zone,
+    circle: ghmcWard.circle,
+    wardName: ghmcWard.ward_name,
     source,
     description: textNote,
   };

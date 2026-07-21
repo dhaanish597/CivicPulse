@@ -24,7 +24,8 @@ rounded, or embellished.**
 
 The ward/zone/circle reference data loaded in this build (`server/data/ghmc_wards.json`)
 comes from a real, official GHMC spreadsheet, but it reflects that document's older
-(2007-era) administrative structure — 5 zones and 18 circles — rather than the current
+(2007-era) administrative structure — the zones and circles present in the loaded
+reference data (currently 4 zones, 18 circles, 149 wards) — rather than the current
 6-zone/30-circle structure named in the table above; both are real, they simply describe
 GHMC's structure at different points in time, and this build did not attempt to reconcile
 them.

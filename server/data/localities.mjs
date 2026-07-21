@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { haversineKm } from '../analytics.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -118,4 +119,56 @@ export function populateWardReferenceTable(database) {
   });
 
   insertMany(wards);
+}
+
+/**
+ * Resolves the real GHMC zone/circle/ward_name for a given (lat, lng) by finding the
+ * nearest entry in the loaded ward reference data (haversine distance, reused from
+ * server/analytics.mjs — same helper server/agents/dedupAgent.mjs uses for duplicate
+ * distance checks).
+ *
+ * Only produces a real answer when the active ward reference source is the real
+ * ghmc_wards.json file. When running against the fallback 20-locality table (no real
+ * ward/circle boundaries loaded), there is nothing to geographically ground a circle
+ * assignment in, so this deliberately returns nulls rather than fabricating one — the
+ * old 20-locality system's `ward` numbering (1-20) has no relationship to real GHMC
+ * ward numbers (1-150ish) and must not be presented as if it did.
+ */
+export function resolveWardForLocation(lat, lng) {
+  const { wards, source } = loadWardReference();
+
+  if (source !== 'ghmc_wards.json') {
+    return { circle: null, zone: null, ward_name: null };
+  }
+
+  const originLat = Number(lat);
+  const originLng = Number(lng);
+  if (!Number.isFinite(originLat) || !Number.isFinite(originLng)) {
+    return { circle: null, zone: null, ward_name: null };
+  }
+
+  let nearestWard = null;
+  let nearestDistanceKm = Infinity;
+
+  for (const ward of wards) {
+    if (!Number.isFinite(ward.lat) || !Number.isFinite(ward.lng)) continue;
+    const distanceKm = haversineKm(
+      { lat: originLat, lng: originLng },
+      { lat: ward.lat, lng: ward.lng },
+    );
+    if (distanceKm < nearestDistanceKm) {
+      nearestDistanceKm = distanceKm;
+      nearestWard = ward;
+    }
+  }
+
+  if (!nearestWard) {
+    return { circle: null, zone: null, ward_name: null };
+  }
+
+  return {
+    circle: nearestWard.circle,
+    zone: nearestWard.zone,
+    ward_name: nearestWard.ward_name,
+  };
 }
