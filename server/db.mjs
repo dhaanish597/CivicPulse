@@ -380,15 +380,18 @@ export function getLatestEvidenceByKind(complaintId, kind, database = getDb()) {
   return row ? rowToEvidence(row) : null;
 }
 
-// Latest evidence row across officer_proof OR citizen_proof — whichever proof was
-// submitted most recently is the freshest evidence being adjudicated (mirrors the
-// task-2 brief's "latest officer_proof/citizen_proof row" phrasing). See
-// verificationAgent.mjs / task-2-report.md for the full rationale.
-export function getLatestProofEvidence(complaintId, database = getDb()) {
+// Latest citizen_proof evidence row — and ONLY citizen_proof. Verification
+// must adjudicate the intake photo against the citizen's independent
+// counter-evidence, never the officer's own officer_proof photo (an officer
+// re-uploading officer_proof must have zero effect on verification — see
+// task-2-report.md "Fix round 1" for the Critical finding this closes: the
+// prior getLatestProofEvidence() unioned both kinds by recency, which let an
+// officer satisfy verification with self-submitted evidence alone).
+export function getLatestCitizenProofEvidence(complaintId, database = getDb()) {
   const row = database
     .prepare(`
       SELECT * FROM evidence
-      WHERE complaint_id = ? AND kind IN ('officer_proof', 'citizen_proof')
+      WHERE complaint_id = ? AND kind = 'citizen_proof'
       ORDER BY created_at DESC LIMIT 1
     `)
     .get(complaintId);

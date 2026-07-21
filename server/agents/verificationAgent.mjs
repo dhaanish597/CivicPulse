@@ -37,18 +37,22 @@ const FAILURE_RESULT = {
 
 /**
  * Adjudicates a claimed resolution by comparing the original intake photo
- * against the latest proof photo (officer_proof or citizen_proof — whichever
- * is more recent). Writes one agent_traces row and one status_events row for
+ * against the citizen's counter-evidence photo (citizen_proof) — and ONLY
+ * that. The officer's own officer_proof photo is never read by this
+ * function; it plays no role in adjudication (see task-2-report.md "Fix
+ * round 1" — an officer must never be able to satisfy verification with
+ * self-submitted evidence alone, and re-uploading officer_proof must have no
+ * effect here). Writes one agent_traces row and one status_events row for
  * the step, and on a 'disputed' verdict reopens the complaint and escalates
  * its urgency. Returns { verdict, confidence, reasoning, sameLocationLikely }
  * and never throws — model failures degrade to the honest 'inconclusive'
  * FAILURE_RESULT above, they never propagate as an unhandled error and never
  * get silently upgraded to a real verdict.
  */
-export async function runVerification(complaint, intakeImagePath, proofImagePath) {
+export async function runVerification(complaint, intakeImagePath, citizenProofImagePath) {
   let result;
   try {
-    result = await callVerificationModel(complaint, intakeImagePath, proofImagePath);
+    result = await callVerificationModel(complaint, intakeImagePath, citizenProofImagePath);
   } catch (error) {
     console.warn('Verification model call failed (after retry) — returning inconclusive.', error.message);
     result = { ...FAILURE_RESULT };
@@ -120,11 +124,11 @@ export async function runVerification(complaint, intakeImagePath, proofImagePath
 // conversationalAgent.mjs already uses for text reasoning) that compares the
 // two descriptions and produces the strict JSON verdict. The retry-once-on-
 // invalid-JSON pattern from classifyImage() is preserved on that final call.
-async function callVerificationModel(complaint, intakeImagePath, proofImagePath) {
+async function callVerificationModel(complaint, intakeImagePath, citizenProofImagePath) {
   const intakeDescription = await describeImage(intakeImagePath, 'ORIGINAL INTAKE PHOTO (the reported issue)');
-  const proofDescription = await describeImage(proofImagePath, "PROOF PHOTO (submitted after an officer claimed the issue was resolved — may be the officer's own proof photo, or a citizen's counter-evidence disputing that claim)");
+  const citizenProofDescription = await describeImage(citizenProofImagePath, "CITIZEN COUNTER-EVIDENCE PHOTO (submitted independently by the citizen — never the officer — specifically to verify whether the officer's resolution claim is genuine)");
 
-  const messages = [{ role: 'user', content: buildVerificationPrompt(complaint, intakeDescription, proofDescription) }];
+  const messages = [{ role: 'user', content: buildVerificationPrompt(complaint, intakeDescription, citizenProofDescription) }];
 
   let text = await callNvidia({
     model: NVIDIA_CHAT_MODEL,
@@ -209,15 +213,15 @@ function validateVerification(value) {
   return { verdict, confidence, reasoning, sameLocationLikely };
 }
 
-function buildVerificationPrompt(complaint, intakeDescription, proofDescription) {
+function buildVerificationPrompt(complaint, intakeDescription, citizenProofDescription) {
   return [
     'You are adjudicating a municipal civic-complaint resolution for the CivicPulse operations dashboard.',
     `Complaint category: ${complaint.category}. Original description: ${complaint.description || '(none provided)'}.`,
     `Description of the ORIGINAL INTAKE PHOTO (the reported issue): ${intakeDescription}`,
-    `Description of the PROOF PHOTO (submitted after an officer claimed the issue was resolved — may be the officer's own proof photo, or a citizen's counter-evidence disputing that claim): ${proofDescription}`,
-    'Compare the two descriptions. Judge whether the proof photo plausibly shows the same location/issue as the intake photo, and whether it shows the issue has genuinely been resolved.',
+    `Description of the CITIZEN'S COUNTER-EVIDENCE PHOTO (submitted independently by the citizen — not the officer — as the check on the officer's resolution claim): ${citizenProofDescription}`,
+    "Compare the two descriptions. Judge whether the citizen's counter-evidence photo plausibly shows the same location/issue as the intake photo, and whether it shows the issue has genuinely been resolved.",
     'Return ONLY a JSON object with this exact shape: {"verdict": "verified" | "disputed" | "inconclusive", "confidence": number between 0.0 and 1.0, "reasoning": "one or two sentences, plain language", "same_location_likely": true | false}.',
-    '"verified" = the proof photo credibly shows the same location with the issue resolved. "disputed" = the proof photo shows a different location/issue, or clearly shows the issue is NOT resolved. "inconclusive" = you cannot tell from the descriptions.',
+    '"verified" = the citizen\'s photo credibly shows the same location with the issue resolved. "disputed" = the citizen\'s photo shows a different location/issue, or clearly shows the issue is NOT resolved. "inconclusive" = you cannot tell from the descriptions.',
     'Do not wrap the JSON in markdown code blocks. Return just the JSON string.',
   ].join('\n');
 }

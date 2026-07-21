@@ -21,7 +21,7 @@ import {
   listStatusEvents,
   insertEvidence,
   getLatestEvidenceByKind,
-  getLatestProofEvidence,
+  getLatestCitizenProofEvidence,
   updateVerification,
   getVerificationStats,
 } from './db.mjs';
@@ -155,6 +155,16 @@ app.patch('/api/complaints/:id/status', async (req, res) => {
 });
 
 app.post('/api/complaints/:id/evidence', (req, res) => {
+  // Complaint-existence is checked BEFORE multer runs (it only needs
+  // req.params.id, not the multipart body), so a request for a nonexistent
+  // complaint never touches disk at all. `kind` still can't be validated this
+  // early — it only becomes readable once multer has parsed the multipart
+  // body — so that check stays below and cleans up its own orphaned file on
+  // failure (see task-2-report.md "Fix round 1" for the Minor finding this
+  // closes).
+  const complaint = getComplaintById(req.params.id);
+  if (!complaint) return res.status(404).json({ error: 'Not found' });
+
   upload.single('image')(req, res, (uploadError) => {
     if (uploadError) {
       const status = uploadError.code === 'LIMIT_FILE_SIZE' ? 413 : getStatus(uploadError);
@@ -165,15 +175,17 @@ app.post('/api/complaints/:id/evidence', (req, res) => {
     }
 
     try {
-      const complaint = getComplaintById(req.params.id);
-      if (!complaint) return res.status(404).json({ error: 'Not found' });
-
       if (!req.file) {
         return res.status(400).json({ error: 'An image file is required.' });
       }
 
       const kind = req.body?.kind;
       if (!EVIDENCE_KINDS.includes(kind)) {
+        // multer already wrote this file to server/uploads/ before `kind` was
+        // readable — delete it rather than leaving an orphan behind.
+        fs.unlink(req.file.path, (unlinkError) => {
+          if (unlinkError) console.error('Failed to remove orphaned evidence upload:', redactError(unlinkError));
+        });
         return res.status(400).json({ error: `kind must be one of ${EVIDENCE_KINDS.join(', ')}.` });
       }
 
@@ -203,15 +215,29 @@ app.post('/api/complaints/:id/verify', async (req, res) => {
     if (!complaint) return res.status(404).json({ error: 'Not found' });
 
     const intake = getLatestEvidenceByKind(req.params.id, 'intake');
-    const proof = getLatestProofEvidence(req.params.id);
-
-    if (!intake || !proof) {
+    if (!intake) {
       return res.status(400).json({
-        error: 'Both intake evidence and proof evidence (officer_proof or citizen_proof) are required before verification.',
+        error: 'Intake evidence is required before verification.',
       });
     }
 
-    const result = await runVerification(complaint, intake.imagePath, proof.imagePath);
+    // Verification adjudicates intake vs. the citizen's counter-evidence
+    // ONLY — never officer_proof. This is the fix for the Critical finding:
+    // previously the "latest proof" query unioned officer_proof and
+    // citizen_proof by recency, which let an officer satisfy verification
+    // with a self-submitted photo alone, or silently discard a citizen's
+    // counter-evidence by re-uploading officer_proof afterward. An officer
+    // re-uploading officer_proof now has no effect on this endpoint at all —
+    // officer_proof is simply never read here. See task-2-report.md "Fix
+    // round 1" for the full rationale.
+    const citizenProof = getLatestCitizenProofEvidence(req.params.id);
+    if (!citizenProof) {
+      return res.status(400).json({
+        error: "Verification requires the citizen's counter-evidence photo. No citizen_proof evidence has been uploaded for this complaint yet.",
+      });
+    }
+
+    const result = await runVerification(complaint, intake.imagePath, citizenProof.imagePath);
 
     updateVerification(req.params.id, {
       verificationStatus: result.verdict,
