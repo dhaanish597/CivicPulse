@@ -12,7 +12,7 @@ import {
 } from './analytics.mjs';
 import { answerWithTools } from './agents/conversationalAgent.mjs';
 import { runPipeline } from './agents/orchestrator.mjs';
-import { localities } from './data/localities.mjs';
+import { loadWardReference } from './data/localities.mjs';
 import { listComplaints, getComplaintById, listStatusEvents } from './db.mjs';
 import { classifyImage } from './nvidia.mjs';
 import { runResolution } from './agents/resolutionAgent.mjs';
@@ -44,7 +44,11 @@ app.get('/api/health', (req, res) => {
 });
 
 app.get('/api/localities', (_req, res) => {
-  res.json(localities);
+  // Serves the real GHMC zone/circle/ward reference when available, or a clearly
+  // labelled fallback (see server/data/localities.mjs#loadWardReference). No
+  // frontend code depended on the previous flat 20-locality shape here, so this
+  // route was free to repurpose for Ward Officer circle-scoping (Round 2 §2).
+  res.json(loadWardReference());
 });
 
 app.get('/api/complaints', (req, res) => {
@@ -116,7 +120,12 @@ app.get('/api/forecast', (req, res) => {
 
 app.get('/api/dispatch', (req, res) => {
   const limit = Number(req.query.limit) || 8;
-  const complaints = listComplaints(req.query.ward ? { ward: req.query.ward } : {});
+  const filters = req.query.circle
+    ? { circle: req.query.circle }
+    : req.query.ward
+      ? { ward: req.query.ward }
+      : {};
+  const complaints = listComplaints(filters);
   res.json(buildDispatchList(complaints, limit));
 });
 

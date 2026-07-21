@@ -1,20 +1,51 @@
 # CivicPulse
 
-CivicPulse is a hackathon prototype for Hyderabad civic operations intelligence, built for Google Cloud Gen AI Academy APAC 2026, Track 2: Intelligent Applications. Citizens can report issues, ward officers see ward-scoped dispatch data, and city admins monitor cross-ward hotspots, forecasts, and resource pressure.
+> **CivicPulse is the closure-verification layer GHMC said it needed and never built.**
+>
+> A civic complaint system's real failure mode is not intake — GHMC already has four
+> intake channels. It is that "resolved" is an unverified claim made by the same
+> person accountable for resolving it. CivicPulse makes closure evidence-based:
+> the citizen's camera is the auditor, and an AI agent adjudicates.
+
+## The Problem
+
+These are sourced, verifiable facts about GHMC's grievance system. **These are the
+only real-world numbers used anywhere in this codebase — nothing here is invented,
+rounded, or embellished.**
+
+| Fact | Source |
+|---|---|
+| ~600 new grievances registered **per day** in GHMC's Centralised Grievance Redressal System (CGRS), via call centre, MyGHMC app, and representations at HQ/circle/zonal offices | Deccan Chronicle, "GHMC body's redressal mechanism appalling" |
+| 74,112 GHMC-related complaints registered on the Prajavani portal between January 2024 and January 2026; ~600 still pending; 1,000+ stuck in ambiguous status categories | RTI disclosure by GHMC PIO, 22 Jan 2026 (filed by RTI activist Kareem Ansari), reported by HyderabadMail |
+| Officials were found **marking complaints closed without attending to them**, to impress higher authorities. 170 officials were served show-cause notices after one internal study | Deccan Chronicle |
+| A senior GHMC official (anonymous): of every 1,000 grievances received, ~800 are closed as "resolved" without the issue being attended to | Deccan Chronicle |
+| GHMC decided to implement a **third-party verification system** to confirm complaints were actually resolved. **Those plans were never implemented.** | Deccan Chronicle |
+| GHMC spans 650 sq km, 6 zones, 30 circles, 150 wards (increased to 300 wards after the 2025 delimitation) | GHMC official circles document / Wikipedia, Administrative divisions of Hyderabad |
+
+The ward/zone/circle reference data loaded in this build (`server/data/ghmc_wards.json`)
+comes from a real, official GHMC spreadsheet, but it reflects that document's older
+(2007-era) administrative structure — 5 zones and 18 circles — rather than the current
+6-zone/30-circle structure named in the table above; both are real, they simply describe
+GHMC's structure at different points in time, and this build did not attempt to reconcile
+them.
+
+Built for Google Cloud Gen AI Academy APAC 2026, Track 2: Intelligent Applications.
 
 ## What Is Real In This Prototype
 
-- Shared backend store: Express uses SQLite at `server/civicpulse.db`, seeded on first start with synthetic complaints across 20 approximate Hyderabad locality centroids.
+- Shared backend store: Express uses SQLite at `server/civicpulse.db`, seeded on first start with synthetic complaints distributed across the real GHMC zone/circle/ward hierarchy (`server/data/ghmc_wards.json`) when present, or a 20-locality fallback with a loud console warning otherwise.
 - Live NVIDIA AI: complaint classification runs in the server-side 7-step agent pipeline, and dashboard chat uses NVIDIA function calling with real backend tools.
 - Agent pipeline: new complaints run through Ingestion, Classification, Dedup, Hotspot, Forecast, Urgency, and Recommendation agents, with trace rows stored in `agent_traces`.
 - Real map: Leaflet + OpenStreetMap tiles show open complaint markers and 30-day ward hotspot circles.
 - Location awareness: the citizen view can use browser geolocation or a manual locality fallback to show open issues within 2 km.
-- Role simulation: Citizen, Ward Officer, and City Admin views are gated; ward officers load data with `GET /api/complaints?ward=`.
+- Role simulation: Citizen, Ward Officer, and City Admin views are gated; a Ward Officer is assigned a real GHMC circle (the operational unit, headed by a Deputy Commissioner) and loads data with `GET /api/complaints?circle=`, enforced server-side.
 - Telegram intake: when `TELEGRAM_BOT_TOKEN` is set, the bot accepts location/locality plus photo reports and sends them through the same pipeline.
 
 ## What Is Simulated For Demo
 
 The complaint dataset is synthetic seed data, not a live government feed. BigQuery, ADK-style production orchestration, RAPIDS acceleration, Looker dashboards, and WhatsApp Business intake are the intended production architecture. This prototype demonstrates the same multi-channel ingestion pattern with Telegram because Telegram bot tokens are instant, while WhatsApp Business API approval usually requires Meta review and business verification.
+
+**The problem statement above is sourced, real reporting. The demo data populating this prototype (complaints, ward activity, resolution history) is synthetic — do not confuse the two.**
 
 ## Split Deployment Architecture
 
@@ -72,3 +103,4 @@ The app is served from the Express/Vite server, usually `http://localhost:5173`.
 - `NVIDIA_API_KEY` and `TELEGRAM_BOT_TOKEN` are read only from server-side code and are not exposed to the client bundle.
 - `.env` is ignored by git.
 - The SQLite file is generated locally; deleting `server/civicpulse.db` lets the app reseed synthetic demo data on next startup.
+- The seed calibrates volume to the real ~600 complaints/day figure above (30 days ≈ 18,000 rows, seeded in ~2.3s locally). Set `SEED_RATE_PER_DAY` to a smaller number (e.g. `100`) to reseed at a reduced, clearly-labelled rate if needed for a slower machine.

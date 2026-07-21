@@ -25,6 +25,10 @@ export interface Complaint {
   reasoning?: string;
   distanceKm?: number;
   urgency?: number;
+  /** Real GHMC administrative overlay (server/data/ghmc_wards.json), when loaded. */
+  zone?: string;
+  circle?: string;
+  wardName?: string;
 }
 
 export interface HotspotGroup {

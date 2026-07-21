@@ -20,8 +20,9 @@ export interface CreateComplaintResponse {
   recommendation?: string;
 }
 
-export async function fetchComplaints(params: { ward?: number; resolved?: boolean; since?: string } = {}): Promise<Complaint[]> {
+export async function fetchComplaints(params: { ward?: number; circle?: string; resolved?: boolean; since?: string } = {}): Promise<Complaint[]> {
   const search = new URLSearchParams();
+  if (params.circle) search.set('circle', params.circle);
   if (params.ward) search.set('ward', String(params.ward));
   if (params.resolved !== undefined) search.set('resolved', String(params.resolved));
   if (params.since) search.set('since', params.since);
@@ -124,6 +125,9 @@ function normalizeComplaint(raw: Record<string, unknown>): Complaint {
     reasoning: raw.reasoning ? String(raw.reasoning) : undefined,
     distanceKm: raw.distanceKm === undefined ? undefined : Number(raw.distanceKm),
     urgency: raw.urgency === undefined ? undefined : Number(raw.urgency),
+    zone: raw.zone ? String(raw.zone) : undefined,
+    circle: raw.circle ? String(raw.circle) : undefined,
+    wardName: raw.wardName ? String(raw.wardName) : (raw.ward_name ? String(raw.ward_name) : undefined),
   };
 }
 

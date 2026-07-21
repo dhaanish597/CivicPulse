@@ -4,7 +4,8 @@ import { Complaint } from '../types';
 import { categoryColors } from '../data/categoryColors';
 
 interface OfficerLeadsBoardProps {
-  ward: number;
+  ward?: number;
+  circle?: string;
 }
 
 interface LeadCardProps {
@@ -82,13 +83,24 @@ const LeadCard: React.FC<LeadCardProps> = ({ complaint, onStatusUpdate }) => {
   );
 };
 
-export const OfficerLeadsBoard: React.FC<OfficerLeadsBoardProps> = ({ ward }) => {
+export const OfficerLeadsBoard: React.FC<OfficerLeadsBoardProps> = ({ ward, circle }) => {
   const [complaints, setComplaints] = useState<(Complaint & { status?: string; lead?: string })[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const scopeLabel = circle ? `Circle ${circle}` : `Ward ${ward}`;
+
   const fetchComplaints = async () => {
+    if (!circle && !ward) {
+      setLoading(false);
+      return;
+    }
+
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173'}/api/complaints?ward=${ward}`);
+      // Real, server-side scoping: ?circle= takes precedence over ?ward= so a
+      // Ward Officer with a real GHMC circle assignment only ever sees their
+      // own circle's complaints (Round 2 §2 — verified via WHERE circle = ?).
+      const query = circle ? `circle=${encodeURIComponent(circle)}` : `ward=${ward}`;
+      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173'}/api/complaints?${query}`);
       if (res.ok) {
         const data = await res.json();
         // Sort by urgency roughly
@@ -106,7 +118,7 @@ export const OfficerLeadsBoard: React.FC<OfficerLeadsBoardProps> = ({ ward }) =>
 
   useEffect(() => {
     fetchComplaints();
-  }, [ward]);
+  }, [ward, circle]);
 
   const handleStatusUpdate = async (id: string, newStatus: string) => {
     try {
@@ -137,7 +149,7 @@ export const OfficerLeadsBoard: React.FC<OfficerLeadsBoardProps> = ({ ward }) =>
           </div>
           <div>
             <h3 className="font-bold text-brand-navy leading-tight">AI Resolution Leads</h3>
-            <p className="text-xs text-gray-500 font-medium">Ward {ward} active dispatch queue</p>
+            <p className="text-xs text-gray-500 font-medium">{scopeLabel} active dispatch queue</p>
           </div>
         </div>
         <span className="text-xs bg-gray-900 text-white px-3 py-1 rounded-full font-bold shadow-sm">
@@ -152,7 +164,7 @@ export const OfficerLeadsBoard: React.FC<OfficerLeadsBoardProps> = ({ ward }) =>
                <CheckCircle className="text-green-500" size={32} />
              </div>
              <p className="font-medium text-brand-navy">All caught up!</p>
-             <p className="text-sm text-gray-500 mt-1">No active leads for Ward {ward}.</p>
+             <p className="text-sm text-gray-500 mt-1">No active leads for {scopeLabel}.</p>
           </div>
         ) : (
           complaints.map(c => (

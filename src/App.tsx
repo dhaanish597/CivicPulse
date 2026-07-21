@@ -41,9 +41,11 @@ function AppShell() {
     if (!roleSession) return;
 
     let isMounted = true;
-    const params = roleSession.role === 'officer' && roleSession.ward
-      ? { ward: roleSession.ward }
-      : {};
+    const params = roleSession.role === 'officer' && roleSession.circle
+      ? { circle: roleSession.circle }
+      : roleSession.role === 'officer' && roleSession.ward
+        ? { ward: roleSession.ward }
+        : {};
 
     setIsLoadingComplaints(true);
     fetchComplaints(params)
@@ -95,7 +97,7 @@ function AppShell() {
       case 'route':
         return <RoutePlanner />;
       case 'ward':
-        return <WardDashboard complaints={complaints} userLocation={userLocation} />;
+        return <WardDashboard complaints={complaints} userLocation={userLocation} circle={roleSession?.circle} />;
       case 'admin':
         return <CityAdmin complaints={complaints} />;
       default:
@@ -197,7 +199,11 @@ function defaultTabForRole(role: RoleSession['role']): TabKey {
 
 function roleLabel(session: RoleSession): string {
   if (session.role === 'citizen') return `${session.name} · Citizen`;
-  if (session.role === 'officer') return `${session.name} · Ward ${session.ward} Officer`;
+  if (session.role === 'officer') {
+    return session.circle
+      ? `${session.name} · Circle ${session.circle} Officer`
+      : `${session.name} · Ward ${session.ward} Officer`;
+  }
   return `${session.name} · City Admin`;
 }
 

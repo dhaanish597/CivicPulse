@@ -1,7 +1,21 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Building2, ClipboardList, UserRound } from 'lucide-react';
 import { RoleSession, UserRole } from '../context/RoleContext';
 import { hyderabadLocalities } from '../data/hyderabadLocalities';
+
+interface WardReferenceEntry {
+  ward_no: number;
+  ward_name: string;
+  circle: string | null;
+  zone: string | null;
+  lat?: number;
+  lng?: number;
+}
+
+interface WardReferenceResponse {
+  wards: WardReferenceEntry[];
+  source: 'ghmc_wards.json' | 'fallback-20-locality';
+}
 
 interface RoleSelectProps {
   onSelect: (session: RoleSession) => void;
@@ -11,12 +25,53 @@ export const RoleSelect: React.FC<RoleSelectProps> = ({ onSelect }) => {
   const [selectedRole, setSelectedRole] = useState<UserRole>('citizen');
   const [name, setName] = useState('');
   const [ward, setWard] = useState(8);
+  const [wardReference, setWardReference] = useState<WardReferenceResponse | null>(null);
+  const [selectedCircle, setSelectedCircle] = useState('');
+
+  // Ward Officer scoping is real-data-driven: fetch the GHMC circle list so the
+  // officer picks their assigned circle (the real operational unit) rather than
+  // a made-up ward number. Falls back to the legacy ward picker below if the
+  // real reference isn't loaded (ghmc_wards.json absent) or unreachable.
+  useEffect(() => {
+    let isMounted = true;
+
+    fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173'}/api/localities`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: WardReferenceResponse | null) => {
+        if (!isMounted || !data) return;
+        setWardReference(data);
+        if (data.source === 'ghmc_wards.json') {
+          const firstCircle = [...new Set(data.wards.map((w) => w.circle))].filter(Boolean)[0];
+          if (firstCircle) setSelectedCircle(firstCircle);
+        }
+      })
+      .catch(() => {
+        // Defensive: keep the legacy ward picker if /api/localities is unreachable.
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const circles = wardReference?.source === 'ghmc_wards.json'
+    ? [...new Set(wardReference.wards.map((w) => w.circle).filter((c): c is string => Boolean(c)))].sort()
+    : [];
 
   const selectedLocality = hyderabadLocalities.find((item) => item.ward === ward);
   const canContinue = name.trim().length > 0;
 
   const handleContinue = () => {
     if (!canContinue) return;
+
+    if (selectedRole === 'officer' && circles.length > 0) {
+      onSelect({
+        role: selectedRole,
+        name: name.trim(),
+        circle: selectedCircle,
+      });
+      return;
+    }
 
     onSelect({
       role: selectedRole,
@@ -49,7 +104,7 @@ export const RoleSelect: React.FC<RoleSelectProps> = ({ onSelect }) => {
           <RoleCard
             role="officer"
             title="Ward Officer"
-            description="View a ward-scoped dispatch dashboard."
+            description="View a circle-scoped dispatch dashboard."
             selectedRole={selectedRole}
             onSelect={setSelectedRole}
             icon={<ClipboardList size={24} />}
@@ -75,7 +130,25 @@ export const RoleSelect: React.FC<RoleSelectProps> = ({ onSelect }) => {
             />
           </div>
 
-          {selectedRole === 'officer' && (
+          {selectedRole === 'officer' && circles.length > 0 && (
+            <div>
+              <label className="text-sm font-medium text-gray-700">Assigned Circle</label>
+              <select
+                value={selectedCircle}
+                onChange={(event) => setSelectedCircle(event.target.value)}
+                className="mt-1 w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0E5C56]"
+              >
+                {circles.map((circle) => (
+                  <option key={circle} value={circle}>
+                    {circle}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-400 mt-1">Real GHMC circle — the operational unit headed by a Deputy Commissioner.</p>
+            </div>
+          )}
+
+          {selectedRole === 'officer' && circles.length === 0 && (
             <div>
               <label className="text-sm font-medium text-gray-700">Assigned Ward</label>
               <select
@@ -89,6 +162,7 @@ export const RoleSelect: React.FC<RoleSelectProps> = ({ onSelect }) => {
                   </option>
                 ))}
               </select>
+              <p className="text-xs text-gray-400 mt-1">Real GHMC circle data unavailable — using demo ward list instead.</p>
             </div>
           )}
 

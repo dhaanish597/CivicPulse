@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getLocalityByWard, localities } from './data/localities.mjs';
+import { getLocalityByWard, localities, populateWardReferenceTable } from './data/localities.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dbPath = path.join(__dirname, 'civicpulse.db');
@@ -82,6 +82,33 @@ export function initSchema(database = getDb()) {
       );
     `);
   }
+
+  // Round 2: real GHMC zone/circle/ward hierarchy (ROUND2.md §2.2). Mirrors the
+  // PRAGMA table_info-guarded shape above so a restart against an existing DB is safe.
+  if (!cols.some(c => c.name === 'zone')) {
+    database.exec(`
+      ALTER TABLE complaints ADD COLUMN zone TEXT;
+      ALTER TABLE complaints ADD COLUMN circle TEXT;
+      ALTER TABLE complaints ADD COLUMN ward_name TEXT;
+    `);
+  }
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS ghmc_wards (
+      ward_no INTEGER PRIMARY KEY,
+      ward_name TEXT NOT NULL,
+      circle TEXT NOT NULL,
+      zone TEXT NOT NULL,
+      lat REAL,
+      lng REAL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_complaints_zone ON complaints(zone);
+    CREATE INDEX IF NOT EXISTS idx_complaints_circle ON complaints(circle);
+    CREATE INDEX IF NOT EXISTS idx_complaints_status ON complaints(status);
+  `);
+
+  populateWardReferenceTable(database);
 }
 
 export function countComplaints(database = getDb()) {
@@ -95,6 +122,11 @@ export function listComplaints(filters = {}, database = getDb()) {
   if (filters.ward) {
     where.push('ward = @ward');
     params.ward = Number(filters.ward);
+  }
+
+  if (filters.circle) {
+    where.push('circle = @circle');
+    params.circle = String(filters.circle);
   }
 
   if (filters.resolved !== undefined && filters.resolved !== '') {
@@ -141,16 +173,21 @@ export function insertComplaint(complaint, database = getDb()) {
     status: status,
     lead: complaint.lead ?? null,
     status_updated_at: complaint.statusUpdatedAt ?? new Date().toISOString(),
+    zone: complaint.zone ?? null,
+    circle: complaint.circle ?? null,
+    ward_name: complaint.wardName ?? complaint.ward_name ?? null,
   };
 
   database
     .prepare(`
       INSERT INTO complaints (
         id, ward, locality, category, severity, reported_at, resolved, days_open,
-        lat, lng, source, description, reasoning, status, lead, status_updated_at
+        lat, lng, source, description, reasoning, status, lead, status_updated_at,
+        zone, circle, ward_name
       ) VALUES (
         @id, @ward, @locality, @category, @severity, @reported_at, @resolved,
-        @days_open, @lat, @lng, @source, @description, @reasoning, @status, @lead, @status_updated_at
+        @days_open, @lat, @lng, @source, @description, @reasoning, @status, @lead, @status_updated_at,
+        @zone, @circle, @ward_name
       )
     `)
     .run(row);
@@ -265,6 +302,9 @@ export function rowToComplaint(row) {
     status: row.status || (row.resolved ? 'resolved' : 'reported'),
     lead: row.lead ?? undefined,
     statusUpdatedAt: row.status_updated_at ?? undefined,
+    zone: row.zone ?? undefined,
+    circle: row.circle ?? undefined,
+    wardName: row.ward_name ?? undefined,
   };
 }
 

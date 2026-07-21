@@ -7,6 +7,13 @@ export interface RoleSession {
   name: string;
   ward?: number;
   locality?: string;
+  /**
+   * Real GHMC circle name (from server/data/ghmc_wards.json), assigned to Ward
+   * Officer sessions when the real ward reference is loaded. Takes precedence
+   * over `ward` for data scoping when present (Round 2 §2 — the circle is the
+   * real operational unit, headed by a Deputy Commissioner).
+   */
+  circle?: string;
 }
 
 interface RoleContextValue {

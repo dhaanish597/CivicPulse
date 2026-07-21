@@ -15,9 +15,11 @@ import { OfficerLeadsBoard } from './OfficerLeadsBoard';
 interface WardDashboardProps {
   complaints: Complaint[];
   userLocation?: UserLocation | null;
+  /** Real GHMC circle assigned to the current Ward Officer session, if any. */
+  circle?: string;
 }
 
-export const WardDashboard: React.FC<WardDashboardProps> = ({ complaints, userLocation = null }) => {
+export const WardDashboard: React.FC<WardDashboardProps> = ({ complaints, userLocation = null, circle }) => {
   const [chatInput, setChatInput] = useState('');
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
@@ -118,7 +120,9 @@ export const WardDashboard: React.FC<WardDashboardProps> = ({ complaints, userLo
         </div>
 
         <div className="h-full">
-          {complaints.length > 0 && userLocation ? (
+          {circle ? (
+            <OfficerLeadsBoard circle={circle} />
+          ) : complaints.length > 0 && userLocation ? (
             <OfficerLeadsBoard ward={userLocation.ward || topWardInfo.ward} />
           ) : (
             <OfficerLeadsBoard ward={topWardInfo.ward} />
