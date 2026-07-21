@@ -131,3 +131,43 @@ judgment (e.g. if seeding the full ~18,000-complaint volume turns out too slow
 for local dev, or if a specific NVIDIA model from `CivicPulseV3spec.md`'s table
 turns out to be retired). Check back here rather than assuming silence means
 everything's resolved.
+
+### Task 1 — deferred minor items (fix in Task 6's final pass, not blocking)
+
+- `server/civicpulse.db` is tracked in git and grew ~62x (132KB → 8.2MB) after
+  the real-volume reseed. Worth deciding whether the live DB should be
+  committed at all, especially once Task 4 adds a `public/snapshot.json`
+  build-time export — the DB itself may not need to ship in git at that point.
+- In fallback mode (no `ghmc_wards.json`), `seed.mjs` no longer guarantees a
+  hotspot skew the way the old code unconditionally did for ward 8. Low
+  practical impact since the real data file is present in this repo, but
+  worth a comment if that path is ever exercised.
+- `RoleSelect.tsx`'s default pre-selected circle isn't alphabetically first,
+  while the dropdown list is sorted — cosmetic mismatch only.
+- Note for Task 6's demo-path walk: the app's real citizen-facing map/near-me/
+  route-planner geography still runs on the old 20-locality demo coordinates,
+  decoupled from the new real-GHMC circle/zone labels (Task 1 kept these
+  systems separate to avoid a large, out-of-scope ripple — see
+  `.superpowers/sdd/task-1-report.md`). Circle-scoped views (Officer Leads
+  Board, dispatch) now work correctly for both seeded and newly-reported
+  complaints via a geographic nearest-neighbor lookup, but a complaint's map
+  pin position and its circle label come from two different coordinate
+  systems. Not a functional bug, but worth being aware of if the demo video
+  shows both the map and a circle label for the same complaint side by side.
+
+### Task 2 — deferred minor items (fix in Task 6's final pass, not blocking)
+
+- NVIDIA's `meta/llama-3.2-11b-vision-instruct` rejects more than one image
+  per prompt (confirmed via a live 400 during testing). The verification
+  agent now does 2 single-image vision calls + 1 text adjudication call
+  instead of 1 combined call — same substantive effect (a real AI agent
+  visually inspects both photos and adjudicates), roughly 3x the latency/cost
+  of the originally-planned single call. Worth knowing for demo pacing (the
+  "Verify this fix" step may take a couple seconds longer than a single call
+  would) and for Task 5's cost-model numbers (3 calls/verification, not 1).
+- `server/civicpulse.db-wal` was committed un-checkpointed after Task 2
+  (~9MB), unlike Task 1's clean flush-to-zero. Low priority — noted for
+  Task 6's cleanup pass.
+- Evidence rows' `id` and stored filename use independently-generated
+  suffixes (harmless, just slightly confusing if you're ever cross-referencing
+  `server/uploads/` files against `evidence` table rows by eye).
