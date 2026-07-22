@@ -47,22 +47,25 @@ const FAILURE_RESULT = {
  * function; it plays no role in adjudication (see task-2-report.md "Fix
  * round 1" — an officer must never be able to satisfy verification with
  * self-submitted evidence alone, and re-uploading officer_proof must have no
- * effect here). Writes one agent_traces row and one status_events row for
- * the step, and on a 'disputed' verdict reopens the complaint and escalates
- * its urgency. Returns { verdict, confidence, reasoning, sameLocationLikely }
- * and never throws — model failures degrade to the honest 'inconclusive'
- * FAILURE_RESULT above, they never propagate as an unhandled error and never
- * get silently upgraded to a real verdict.
+ * effect here). Pure model-calling + guardrail logic ONLY — no DB writes, no
+ * side effects on `complaint`. Returns
+ * { verdict, confidence, reasoning, sameLocationLikely } and never throws —
+ * model failures degrade to the honest 'inconclusive' FAILURE_RESULT above,
+ * they never propagate as an unhandled error and never get silently
+ * upgraded to a real verdict.
+ *
+ * Round 2 Task 5: pulled out of runVerification() below (which used to
+ * inline this) so evals/run_verification_eval.mjs can get a real verdict
+ * without runVerification()'s DB-mutation tail (insertAgentTrace,
+ * updateComplaintStatus, escalateSeverity, insertStatusEvent) — those assume
+ * `complaint` is a real row in the `complaints` table (escalateSeverity()
+ * re-reads it via getComplaintById() and returns null for a synthetic eval
+ * id, which crashed runVerification()'s own scoreUrgency() call on a
+ * 'disputed' verdict during Task 5 testing; see task-5-report.md).
+ * runVerification() below is unchanged in behavior — it just calls this
+ * first — so its existing contract (return shape, DB writes) is identical to
+ * before this refactor.
  */
-// Round 2 Task 5: pulled out of runVerification() below so evals/run_verification_eval.mjs
-// can get a real verdict without runVerification()'s DB-mutation tail (insertAgentTrace,
-// updateComplaintStatus, escalateSeverity, insertStatusEvent) — those assume `complaint`
-// is a real row in the `complaints` table (escalateSeverity() re-reads it via
-// getComplaintById() and returns null for a synthetic eval id, which crashed
-// runVerification()'s own scoreUrgency() call on a 'disputed' verdict during Task 5
-// testing; see task-5-report.md). runVerification() below is unchanged in behavior — it
-// just calls this first — so its existing contract (return shape, DB writes) is identical
-// to before this refactor.
 export async function adjudicateVerification(complaint, intakeImagePath, citizenProofImagePath) {
   let result;
   try {
@@ -84,6 +87,15 @@ export async function adjudicateVerification(complaint, intakeImagePath, citizen
   return applyGuardrails(result);
 }
 
+/**
+ * The full verification step: calls adjudicateVerification() above for the
+ * verdict, then writes one agent_traces row and one status_events row for
+ * the step, and on a 'disputed' verdict reopens the complaint and escalates
+ * its urgency. This is verificationAgent.mjs's normal entry point — the one
+ * server/index.mjs's POST /api/complaints/:id/verify route calls — and
+ * requires `complaint` to be a real row in the `complaints` table (see
+ * adjudicateVerification()'s doc comment above for why).
+ */
 export async function runVerification(complaint, intakeImagePath, citizenProofImagePath) {
   const result = await adjudicateVerification(complaint, intakeImagePath, citizenProofImagePath);
 
