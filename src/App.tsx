@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Building2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Building2, CloudOff, RadioTower } from 'lucide-react';
 import { Complaint, UserLocation } from './types';
 import { Tab, TabBar, TabKey } from './components/TabBar';
 import { ReportIssue } from './components/ReportIssue';
@@ -10,7 +10,10 @@ import { CityAdmin } from './components/CityAdmin';
 import { RoleSelect } from './components/RoleSelect';
 import { LocalIssuesMap } from './components/LocalIssuesMap';
 import { RoleProvider, RoleSession, useRole } from './context/RoleContext';
-import { fetchComplaints } from './services';
+import { fetchComplaints, loadSnapshot, SnapshotData } from './services';
+import { LIVE_FETCH_TIMEOUT_MS } from './config';
+
+type DataBadgeState = 'snapshot' | 'live' | 'cached' | null;
 
 const allTabs: Tab[] = [
   { key: 'nearme', label: 'Local Map' },
@@ -37,6 +40,37 @@ function AppShell() {
   const [isLoadingComplaints, setIsLoadingComplaints] = useState(true);
   const [loadError, setLoadError] = useState('');
 
+  // Round 2 Task 4, Step 7 (ROUND2.md §4.1) — snapshot-first render. `snapshot`
+  // drives CityAdmin's verification-stats fallback prop below; `snapshotRef`
+  // lets the live-fetch effect read the latest snapshot without needing it as
+  // a dependency (avoiding a second live fetch firing merely because the
+  // snapshot happened to finish loading after the live one started).
+  const [snapshot, setSnapshot] = useState<SnapshotData | null>(null);
+  const snapshotRef = useRef<SnapshotData | null>(null);
+  const liveDataLoadedRef = useRef(false);
+  const [dataBadge, setDataBadge] = useState<DataBadgeState>(null);
+
+  // Loads the static snapshot once, independent of role/tab — a same-origin
+  // static asset, so this never waits on the (possibly cold-starting)
+  // backend. If the live fetch below hasn't already succeeded by the time
+  // this resolves, show the snapshot immediately instead of a bare spinner.
+  useEffect(() => {
+    let isMounted = true;
+    loadSnapshot().then((data) => {
+      if (!isMounted || !data) return;
+      snapshotRef.current = data;
+      setSnapshot(data);
+      if (!liveDataLoadedRef.current) {
+        setComplaints(data.complaints);
+        setIsLoadingComplaints(false);
+        setDataBadge('snapshot');
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   useEffect(() => {
     if (!roleSession) return;
 
@@ -47,16 +81,35 @@ function AppShell() {
         ? { ward: roleSession.ward }
         : {};
 
-    setIsLoadingComplaints(true);
-    fetchComplaints(params)
+    if (snapshotRef.current) {
+      // Snapshot already loaded — render it now instead of a spinner while
+      // the live request (possibly against a cold-starting backend) is in flight.
+      setComplaints(snapshotRef.current.complaints);
+      setIsLoadingComplaints(false);
+      setDataBadge('snapshot');
+    } else {
+      setIsLoadingComplaints(true);
+    }
+
+    fetchComplaints(params, { timeoutMs: LIVE_FETCH_TIMEOUT_MS })
       .then((data) => {
         if (!isMounted) return;
+        liveDataLoadedRef.current = true;
         setComplaints(data);
         setLoadError('');
+        setDataBadge('live');
       })
       .catch(() => {
         if (!isMounted) return;
-        setLoadError('Unable to load complaints from the shared backend.');
+        if (snapshotRef.current) {
+          // Live fetch failed or timed out — the snapshot data is still on
+          // screen (or gets applied by the snapshot effect above once it
+          // resolves), just relabel it honestly rather than showing a blank
+          // screen or an error banner (ROUND2.md §4.1).
+          setDataBadge('cached');
+        } else {
+          setLoadError('Unable to load complaints from the shared backend.');
+        }
       })
       .finally(() => {
         if (isMounted) setIsLoadingComplaints(false);
@@ -99,7 +152,7 @@ function AppShell() {
       case 'ward':
         return <WardDashboard complaints={complaints} userLocation={userLocation} circle={roleSession?.circle} />;
       case 'admin':
-        return <CityAdmin complaints={complaints} />;
+        return <CityAdmin complaints={complaints} snapshotVerificationStats={snapshot?.verificationStats ?? null} />;
       default:
         return null;
     }
@@ -129,6 +182,7 @@ function AppShell() {
                 <h1 className="text-xl font-bold text-brand-navy">CivicPulse</h1>
                 <p className="text-xs text-gray-500">AI Decision Intelligence</p>
               </div>
+              <DataSourceBadge state={dataBadge} />
             </div>
             <div className="flex items-center gap-4">
               <div className="text-right">
@@ -205,6 +259,35 @@ function roleLabel(session: RoleSession): string {
       : `${session.name} · Ward ${session.ward} Officer`;
   }
   return `${session.name} · City Admin`;
+}
+
+/**
+ * Round 2 Task 4, Step 7 (ROUND2.md §4.1): an honest, small indicator of
+ * where the data on screen came from — never a blank screen or a bare
+ * spinner while the live API is still loading (or unreachable). Renders
+ * nothing once live data has actually loaded (dataBadge === 'live') or
+ * before any snapshot/live signal exists yet (dataBadge === null).
+ */
+function DataSourceBadge({ state }: { state: DataBadgeState }) {
+  if (state === 'snapshot') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-100 px-2.5 py-1 rounded-full">
+        <RadioTower size={12} className="animate-pulse" />
+        Live data loading…
+      </span>
+    );
+  }
+
+  if (state === 'cached') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 bg-gray-100 border border-gray-200 px-2.5 py-1 rounded-full">
+        <CloudOff size={12} />
+        Showing cached data
+      </span>
+    );
+  }
+
+  return null;
 }
 
 export default App;

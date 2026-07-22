@@ -26,3 +26,5 @@ export {
   verifyResolution,
 } from './verificationService';
 export type { VerificationStats, VerifyResult } from './verificationService';
+export { loadSnapshot } from './snapshotService';
+export type { SnapshotData } from './snapshotService';

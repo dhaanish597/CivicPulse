@@ -86,10 +86,18 @@ export async function verifyResolution(complaintId: string): Promise<VerifyResul
   return response.json();
 }
 
-export async function fetchVerificationStats(): Promise<VerificationStats> {
-  const response = await fetch(`${API_BASE}/api/verification-stats`);
-  if (!response.ok) throw new Error('Unable to load verification stats.');
-  return response.json();
+/** `options.timeoutMs` — see the matching note on fetchComplaints() in complaintService.ts (Round 2 Task 4, Step 7). */
+export async function fetchVerificationStats(options: { timeoutMs?: number } = {}): Promise<VerificationStats> {
+  const controller = options.timeoutMs ? new AbortController() : undefined;
+  const timeoutId = controller ? window.setTimeout(() => controller.abort(), options.timeoutMs) : undefined;
+
+  try {
+    const response = await fetch(`${API_BASE}/api/verification-stats`, { signal: controller?.signal });
+    if (!response.ok) throw new Error('Unable to load verification stats.');
+    return response.json();
+  } finally {
+    if (timeoutId) window.clearTimeout(timeoutId);
+  }
 }
 
 /**

@@ -21,18 +21,39 @@ export interface CreateComplaintResponse {
   recommendation?: string;
 }
 
-export async function fetchComplaints(params: { ward?: number; circle?: string; resolved?: boolean; since?: string } = {}): Promise<Complaint[]> {
+/**
+ * `options.timeoutMs` (Round 2 Task 4, Step 7 — ROUND2.md §4.1): bounds how
+ * long this waits on a possibly cold-starting backend (Render's free tier
+ * can take ~50s to wake). Callers that have a static snapshot fallback to
+ * fall back to (App.tsx) pass a short timeout so the UI can honestly switch
+ * to "Showing cached data" instead of hanging; callers with no such fallback
+ * can omit it to wait indefinitely, unchanged from pre-Task-4 behavior.
+ */
+export async function fetchComplaints(
+  params: { ward?: number; circle?: string; resolved?: boolean; since?: string } = {},
+  options: { timeoutMs?: number } = {},
+): Promise<Complaint[]> {
   const search = new URLSearchParams();
   if (params.circle) search.set('circle', params.circle);
   if (params.ward) search.set('ward', String(params.ward));
   if (params.resolved !== undefined) search.set('resolved', String(params.resolved));
   if (params.since) search.set('since', params.since);
 
-  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173'}/api/complaints${search.toString() ? `?${search}` : ''}`);
-  if (!response.ok) throw new Error('Unable to load complaints.');
+  const controller = options.timeoutMs ? new AbortController() : undefined;
+  const timeoutId = controller ? window.setTimeout(() => controller.abort(), options.timeoutMs) : undefined;
 
-  const data = await response.json();
-  return data.map(normalizeComplaint);
+  try {
+    const response = await fetch(
+      `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173'}/api/complaints${search.toString() ? `?${search}` : ''}`,
+      { signal: controller?.signal },
+    );
+    if (!response.ok) throw new Error('Unable to load complaints.');
+
+    const data = await response.json();
+    return data.map(normalizeComplaint);
+  } finally {
+    if (timeoutId) window.clearTimeout(timeoutId);
+  }
 }
 
 export async function createComplaint(input: CreateComplaintInput): Promise<CreateComplaintResponse> {

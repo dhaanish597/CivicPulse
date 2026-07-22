@@ -1,16 +1,27 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Calendar, ChevronDown, ChevronUp, Lightbulb, ShieldOff, TrendingUp } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, Calendar, ChevronDown, ChevronUp, CloudOff, Lightbulb, ShieldOff, TrendingUp } from 'lucide-react';
 import { Complaint } from '../types';
 import { detectHotspots, getTopHotspotWard, computeDailyCounts, forecastNext7Days, fetchVerificationStats, VerificationStats } from '../services';
+import { LIVE_FETCH_TIMEOUT_MS } from '../config';
 import { KPICard } from './KPICard';
 import { HotspotBarChart } from './HotspotBarChart';
 import { MapView } from './MapView';
 
 interface CityAdminProps {
   complaints: Complaint[];
+  /**
+   * Round 2 Task 4, Step 7 (ROUND2.md §4.1) — the verification-stats slice
+   * of public/snapshot.json, passed down from App.tsx. Seeds this hero stat
+   * with a real number immediately (no skeleton flash) instead of blocking
+   * on GET /api/verification-stats, and is what this falls back to keeping
+   * on screen — clearly labelled as cached — if that live call fails or
+   * times out against a cold-starting backend. Optional/nullable because
+   * the snapshot may not have finished loading yet, or may not exist at all.
+   */
+  snapshotVerificationStats?: VerificationStats | null;
 }
 
-export const CityAdmin: React.FC<CityAdminProps> = ({ complaints }) => {
+export const CityAdmin: React.FC<CityAdminProps> = ({ complaints, snapshotVerificationStats }) => {
   const openComplaints = useMemo(
     () => complaints.filter((c) => !c.resolved),
     [complaints]
@@ -75,26 +86,59 @@ export const CityAdmin: React.FC<CityAdminProps> = ({ complaints }) => {
   // there's no existing prop chain carrying verification-stats down from
   // App.tsx, and threading one through solely for this single self-contained
   // number would be more plumbing than the stat is worth (Task 3 brief §5).
-  const [stats, setStats] = useState<VerificationStats | null>(null);
-  const [statsLoading, setStatsLoading] = useState(true);
+  const [stats, setStats] = useState<VerificationStats | null>(snapshotVerificationStats ?? null);
+  const [statsLoading, setStatsLoading] = useState(!snapshotVerificationStats);
   const [statsError, setStatsError] = useState('');
+  // Round 2 Task 4, Step 7: true whenever `stats` is showing the snapshot
+  // fallback rather than a real live read — drives the small "cached" note
+  // below the hero number so this never silently passes off stale-looking
+  // data as live.
+  const [statsIsCached, setStatsIsCached] = useState(Boolean(snapshotVerificationStats));
   const [showUnverifiedList, setShowUnverifiedList] = useState(false);
+  const liveStatsLoadedRef = useRef(false);
+  // Mirrors the snapshotVerificationStats prop on every render so the
+  // live-fetch effect below (mount-once, empty deps — it must stay that way
+  // so it doesn't re-fire just because the snapshot prop arrived) can read
+  // the LATEST snapshot value inside its .catch() instead of the stale one
+  // closed over when the effect first ran.
+  const snapshotStatsRef = useRef(snapshotVerificationStats);
+  snapshotStatsRef.current = snapshotVerificationStats;
+
+  // The snapshot may not have finished loading yet by the time CityAdmin
+  // first mounts (App.tsx fetches it independently of which tab is active),
+  // so this applies it the moment it arrives too — but only if a real live
+  // read hasn't already won the race.
+  useEffect(() => {
+    if (!snapshotVerificationStats || liveStatsLoadedRef.current) return;
+    setStats(snapshotVerificationStats);
+    setStatsLoading(false);
+    setStatsIsCached(true);
+  }, [snapshotVerificationStats]);
 
   useEffect(() => {
     let isMounted = true;
-    setStatsLoading(true);
-    fetchVerificationStats()
+    fetchVerificationStats({ timeoutMs: LIVE_FETCH_TIMEOUT_MS })
       .then((data) => {
-        if (isMounted) {
-          setStats(data);
-          setStatsError('');
-        }
+        if (!isMounted) return;
+        liveStatsLoadedRef.current = true;
+        setStats(data);
+        setStatsError('');
+        setStatsIsCached(false);
+        setStatsLoading(false);
       })
       .catch(() => {
-        if (isMounted) setStatsError('Unable to load verification stats.');
-      })
-      .finally(() => {
-        if (isMounted) setStatsLoading(false);
+        if (!isMounted) return;
+        // Bounded by LIVE_FETCH_TIMEOUT_MS above against a cold-starting
+        // backend (ROUND2.md §4.1) — if we already have (or later get) a
+        // snapshot number to show, keep it on screen (explicitly marked
+        // cached) instead of replacing it with an error; only show the hard
+        // "unavailable" state when there was never any fallback at all.
+        if (snapshotStatsRef.current) {
+          setStatsIsCached(true);
+        } else {
+          setStatsError('Unable to load verification stats.');
+        }
+        setStatsLoading(false);
       });
     return () => {
       isMounted = false;
@@ -162,7 +206,15 @@ export const CityAdmin: React.FC<CityAdminProps> = ({ complaints }) => {
       ) : (
         <div className="bg-brand-navy rounded-3xl shadow-lg overflow-hidden text-white">
           <div className="p-8 sm:p-10">
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-white/50 mb-4">Verification Integrity</p>
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-white/50">Verification Integrity</p>
+              {statsIsCached && (
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-white/70 bg-white/10 px-2.5 py-1 rounded-full shrink-0">
+                  <CloudOff size={11} />
+                  Cached
+                </span>
+              )}
+            </div>
             <div className="flex items-baseline gap-3 flex-wrap">
               <span className="text-6xl sm:text-7xl font-bold leading-none tabular-nums">{unverifiedPct}%</span>
               <span className="text-lg sm:text-xl text-white/85 max-w-md leading-snug">

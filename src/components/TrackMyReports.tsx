@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowRight, Camera, CheckCircle, Clock, Loader, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { ArrowRight, Camera, CheckCircle, Clock, Loader, Sparkles, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { EvidenceKind, VerificationVerdict } from '../types';
 import { updateComplaintStatus, uploadEvidence, verifyResolution } from '../services';
 import { fetchEvidence, getCachedEvidenceUrls, pickLatestEvidenceByKind } from '../services/verificationService';
@@ -37,6 +37,8 @@ export const TrackMyReports: React.FC = () => {
   // uploaded/received shows instantly without waiting on the round trip.
   const [evidence, setEvidence] = useState<Record<string, Partial<Record<EvidenceKind, string>>>>({});
   const [loading, setLoading] = useState(false);
+  const [demoLoading, setDemoLoading] = useState(false);
+  const [demoError, setDemoError] = useState('');
 
   const fetchReports = async () => {
     setLoading(true);
@@ -95,6 +97,66 @@ export const TrackMyReports: React.FC = () => {
     }
   };
 
+  /**
+   * Round 2 Task 4, Step 8 (ROUND2.md §4.6): "a judge arriving fresh has
+   * empty localStorage, so TrackMyReports is blank — the worst possible
+   * first impression for the headline feature." Pulls up to 3 REAL complaint
+   * IDs from GET /api/demo-reports — one active/early-stage, one
+   * 'resolution_claimed' (awaiting verification), one 'disputed' — and adds
+   * them to localStorage['civicpulse_my_reports'] so the rest of this
+   * screen's normal (non-demo) rendering path takes over from there.
+   *
+   * IDs are looked up live rather than hardcoded (see
+   * db.mjs#getDemoReportCandidates for the full reasoning): seeding alone
+   * never creates 'resolution_claimed'/'disputed' complaints, only the real
+   * claim/verify/dispute flow does, so which IDs qualify can only be known
+   * by asking the live DB, and any slot with nothing yet is simply omitted
+   * rather than faked. This is a genuinely live-dependent feature (unlike
+   * the snapshot-backed dashboards elsewhere in the app) — if the backend is
+   * unreachable, that's reported honestly below rather than silently
+   * inventing IDs that would just dead-end the next fetch anyway.
+   */
+  const loadDemoReports = async () => {
+    setDemoLoading(true);
+    setDemoError('');
+    try {
+      const res = await fetch(`${API_BASE}/api/demo-reports`);
+      if (!res.ok) throw new Error('Unable to reach the server for demo reports.');
+
+      const data: Array<{ id: string; locality: string; category: string; reportedAt: string }> = await res.json();
+
+      if (data.length === 0) {
+        setDemoError('No demo reports exist in this environment yet — they only appear once a claim/verify/dispute has happened at least once.');
+        return;
+      }
+
+      const demoTracked: TrackedReport[] = data.map((c) => ({
+        id: c.id,
+        locality: c.locality,
+        category: c.category,
+        submittedAt: c.reportedAt,
+      }));
+
+      const existing: TrackedReport[] = JSON.parse(localStorage.getItem('civicpulse_my_reports') || '[]');
+      const merged = [...demoTracked, ...existing.filter((r) => !demoTracked.some((d) => d.id === r.id))];
+      localStorage.setItem('civicpulse_my_reports', JSON.stringify(merged));
+
+      await fetchReports();
+    } catch (e) {
+      // Deliberately not surfacing e.message here — a real network failure
+      // (backend unreachable) throws a raw browser TypeError ("Failed to
+      // fetch"), and rendering that verbatim would violate the "never show
+      // a raw error string where prose belongs" rule this whole task is
+      // built around. This button is genuinely live-dependent (see the
+      // function doc comment above), so a fixed, honest, intentional-
+      // sounding message is used for every failure mode instead.
+      console.error('Unable to load demo reports:', e);
+      setDemoError('Demo reports need a live connection to the server, which isn’t reachable right now. Try again once the backend is up.');
+    } finally {
+      setDemoLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchReports();
   }, []);
@@ -107,6 +169,17 @@ export const TrackMyReports: React.FC = () => {
         </div>
         <h3 className="text-xl font-medium text-brand-navy mb-2">No active reports</h3>
         <p className="text-gray-500">Reports you submit will appear here so you can track their progress.</p>
+
+        <button
+          type="button"
+          onClick={loadDemoReports}
+          disabled={demoLoading}
+          className="mt-6 inline-flex items-center gap-2 text-sm font-semibold text-brand-teal bg-teal-50 hover:bg-teal-100 border border-teal-100 px-5 py-2.5 rounded-lg transition-colors disabled:opacity-60"
+        >
+          {demoLoading ? <Loader className="animate-spin" size={16} /> : <Sparkles size={16} />}
+          Demo data — load sample reports
+        </button>
+        {demoError && <p className="text-xs text-red-600 mt-3 max-w-sm mx-auto">{demoError}</p>}
       </div>
     );
   }
@@ -115,11 +188,26 @@ export const TrackMyReports: React.FC = () => {
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
       <div className="flex justify-between items-center bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
         <h2 className="text-2xl font-semibold text-brand-navy">Track My Reports</h2>
-        <button onClick={fetchReports} className="text-sm font-medium text-brand-teal flex items-center gap-2 hover:bg-teal-50 px-4 py-2 rounded-lg transition-colors">
-          {loading ? <Loader className="animate-spin" size={16} /> : <Clock size={16} />}
-          Refresh Status
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={loadDemoReports}
+            disabled={demoLoading}
+            title="Demo data — load sample reports"
+            className="text-sm font-medium text-gray-500 flex items-center gap-2 hover:bg-gray-50 px-3 py-2 rounded-lg transition-colors disabled:opacity-60"
+          >
+            {demoLoading ? <Loader className="animate-spin" size={14} /> : <Sparkles size={14} />}
+            Demo data
+          </button>
+          <button onClick={fetchReports} className="text-sm font-medium text-brand-teal flex items-center gap-2 hover:bg-teal-50 px-4 py-2 rounded-lg transition-colors">
+            {loading ? <Loader className="animate-spin" size={16} /> : <Clock size={16} />}
+            Refresh Status
+          </button>
+        </div>
       </div>
+      {demoError && (
+        <div className="bg-red-50 border border-red-100 text-red-700 rounded-xl px-4 py-3 text-sm">{demoError}</div>
+      )}
 
       <div className="space-y-4">
         {reports.map(r => {

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node server/index.mjs",
     "dev:vite": "vite",
-    "build": "vite build",
+    "snapshot": "node scripts/generate-snapshot.mjs",
+    "build": "npm run snapshot && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.app.json"
