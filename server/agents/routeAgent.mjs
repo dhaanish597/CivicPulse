@@ -2,6 +2,10 @@ import { getRoute } from '../routing.mjs';
 import { listComplaints } from '../db.mjs';
 import { detectHotspots } from '../analytics.mjs';
 import { generateNvidiaContent, NVIDIA_CHAT_MODEL } from '../nvidia.mjs';
+import { hashKey, withCache } from '../cache.mjs';
+
+// Round 2 Task 4, Step 2: bump if the advisory prompt below changes shape.
+const ROUTE_ADVISORY_PROMPT_VERSION = 'v1';
 
 function getDistance(lat1, lon1, lat2, lon2) {
   const p = 0.017453292519943295;
@@ -81,22 +85,33 @@ Flagged categories: ${Array.from(new Set(mainEval.flagged.map(c => c.category)))
 Alternatives available: ${altIndex !== undefined ? 'Yes (cleaner alternative found)' : 'No'}.`;
 
     try {
-      const data = await generateNvidiaContent({
-        model: NVIDIA_CHAT_MODEL,
-        messages: [{
-          role: 'user',
-          content: `You are an AI route advisor for a city planner.
+      // Keyed on the exact context string (flagged-issue count, risk score,
+      // flagged categories, alternative-availability) — an identical
+      // route/hazard read hits cache with zero NVIDIA calls.
+      const cacheKey = hashKey(['route-advisory', ROUTE_ADVISORY_PROMPT_VERSION, context]);
+
+      advisory = await withCache(cacheKey, async () => {
+        const data = await generateNvidiaContent({
+          model: NVIDIA_CHAT_MODEL,
+          messages: [{
+            role: 'user',
+            content: `You are an AI route advisor for a city planner.
 Context:
 ${context}
 
 Write a 1-2 sentence plain-language advisory summarizing the hazards. If an alternative is available, advise taking it.`
-        }],
-        max_tokens: 100,
-        temperature: 0.2,
+          }],
+          max_tokens: 100,
+          temperature: 0.2,
+        });
+        const text = data.choices?.[0]?.message?.content?.trim();
+        if (!text) {
+          // Never cache an empty result — fall through to the rule-based
+          // fallback below on the very next call too, not a cached blank.
+          throw new Error('NVIDIA API returned no advisory text.');
+        }
+        return text;
       });
-      if (data.choices?.[0]?.message?.content) {
-        advisory = data.choices[0].message.content.trim();
-      }
     } catch (e) {
       advisory = `High risk route due to ${mainEval.flagged.length} issues. ${altIndex !== undefined ? 'Alternative route recommended.' : 'Proceed with caution.'}`;
     }

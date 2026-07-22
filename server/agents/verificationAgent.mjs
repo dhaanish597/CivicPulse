@@ -11,6 +11,11 @@ import {
 } from '../db.mjs';
 import { computeRecurrenceCounts, scoreUrgency } from '../analytics.mjs';
 import { generateId } from '../utils.mjs';
+import { hashKey, withCache } from '../cache.mjs';
+
+// Round 2 Task 4, Step 2: bump either if its respective prompt shape changes.
+const DESCRIBE_PROMPT_VERSION = 'v1';
+const ADJUDICATE_PROMPT_VERSION = 'v1';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadsDir = path.join(__dirname, '..', 'uploads');
@@ -52,7 +57,16 @@ const FAILURE_RESULT = {
 export async function runVerification(complaint, intakeImagePath, citizenProofImagePath) {
   let result;
   try {
-    result = await callVerificationModel(complaint, intakeImagePath, citizenProofImagePath);
+    // Keyed on complaint id + both evidence image paths (each evidence
+    // upload gets its own unique generateId('EVD') filename — server/index.mjs
+    // — so the path itself already uniquely identifies that evidence row's
+    // content, no need to separately hash file bytes). Re-verifying the same
+    // complaint against the exact same intake/citizen_proof pair (a retried
+    // request, a duplicate click) is a full cache hit — zero NVIDIA calls for
+    // all 3 calls inside callVerificationModel (server/cache.mjs, ROUND2.md
+    // §4.2's explicit "verification verdicts" entry).
+    const cacheKey = hashKey(['verify-adjudicate', ADJUDICATE_PROMPT_VERSION, complaint.id, intakeImagePath, citizenProofImagePath]);
+    result = await withCache(cacheKey, () => callVerificationModel(complaint, intakeImagePath, citizenProofImagePath));
   } catch (error) {
     console.warn('Verification model call failed (after retry) — returning inconclusive.', error.message);
     result = { ...FAILURE_RESULT };
@@ -155,24 +169,34 @@ async function callVerificationModel(complaint, intakeImagePath, citizenProofIma
   }
 }
 
+// Cached independently of the final adjudication call above it, keyed on
+// just the image path + label (the same intake photo gets described
+// identically on every re-verification attempt for a complaint — only
+// citizen_proof usually changes between attempts after an 'inconclusive'
+// result — so this is a real second win beyond the outer
+// verify-adjudicate cache when only one of the two photos actually changed).
 async function describeImage(imagePath, label) {
-  const image = loadImageAsDataPayload(imagePath);
-  const content = [
-    {
-      type: 'text',
-      text: `Describe this photo in 2-3 sentences for a municipal civic-complaint verification pipeline. This is the ${label}. Note the setting, visible objects/surfaces, colors, and anything relevant to judging location and condition. Be concrete and literal — do not speculate beyond what's visible. Do not wrap your answer in markdown.`,
-    },
-    { type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } },
-  ];
+  const cacheKey = hashKey(['verify-describe', DESCRIBE_PROMPT_VERSION, label, imagePath]);
 
-  const text = await callNvidia({
-    model: NVIDIA_VISION_MODEL,
-    messages: [{ role: 'user', content }],
-    max_tokens: 200,
-    temperature: 0.2,
+  return withCache(cacheKey, async () => {
+    const image = loadImageAsDataPayload(imagePath);
+    const content = [
+      {
+        type: 'text',
+        text: `Describe this photo in 2-3 sentences for a municipal civic-complaint verification pipeline. This is the ${label}. Note the setting, visible objects/surfaces, colors, and anything relevant to judging location and condition. Be concrete and literal — do not speculate beyond what's visible. Do not wrap your answer in markdown.`,
+      },
+      { type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } },
+    ];
+
+    const text = await callNvidia({
+      model: NVIDIA_VISION_MODEL,
+      messages: [{ role: 'user', content }],
+      max_tokens: 200,
+      temperature: 0.2,
+    });
+
+    return text.trim();
   });
-
-  return text.trim();
 }
 
 function applyGuardrails(result) {

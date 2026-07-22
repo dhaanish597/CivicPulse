@@ -137,6 +137,23 @@ export function initSchema(database = getDb()) {
     CREATE INDEX IF NOT EXISTS idx_complaints_verification_status ON complaints (verification_status);
   `);
 
+  // Round 2 Task 4: shared LLM response cache (server/cache.mjs#withCache),
+  // reliability hardening against NVIDIA free-tier rate limits (ROUND2.md
+  // §4.2). A brand-new table, so it uses the same plain
+  // CREATE-TABLE-IF-NOT-EXISTS shape as evidence/agent_traces/status_events
+  // above rather than the PRAGMA table_info-guarded ALTER pattern (that
+  // pattern is only needed when adding a column to a table that may already
+  // exist with rows in it).
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS llm_cache (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_llm_cache_created_at ON llm_cache (created_at);
+  `);
+
   populateWardReferenceTable(database);
 }
 
@@ -424,6 +441,51 @@ export function getVerificationStats(database = getDb()) {
     disputed_rate: disputedRate,
     unverified_legacy_count: counts.unverified,
   };
+}
+
+// Round 2 Task 4, Step 8 (ROUND2.md §4.6): backs GET /api/demo-reports. A
+// judge arriving fresh has empty localStorage, so TrackMyReports starts
+// blank — the "Demo data" button needs 3 real complaint IDs spanning
+// different states, including one 'resolution_claimed' (awaiting
+// verification) and one 'disputed'. Seeding alone (server/seed.mjs) never
+// produces either of those two states — they only exist once the real
+// claim/verify/dispute flow has actually been exercised through the app or
+// API — so these are looked up dynamically against whatever's really in the
+// DB right now rather than shipping hardcoded IDs that would silently stop
+// existing the moment the DB is reseeded fresh. Any slot with no matching
+// row yet is simply omitted (never fabricated), so the caller can render
+// however many of the 3 target states genuinely exist.
+export function getDemoReportCandidates(database = getDb()) {
+  const active = database
+    .prepare(`
+      SELECT * FROM complaints
+      WHERE status IN ('reported', 'acknowledged', 'in_progress')
+      ORDER BY reported_at DESC
+      LIMIT 1
+    `)
+    .get();
+
+  const awaitingVerification = database
+    .prepare(`
+      SELECT * FROM complaints
+      WHERE status = 'resolution_claimed'
+      ORDER BY status_updated_at DESC
+      LIMIT 1
+    `)
+    .get();
+
+  const disputed = database
+    .prepare(`
+      SELECT * FROM complaints
+      WHERE verification_status = 'disputed'
+      ORDER BY verified_at DESC
+      LIMIT 1
+    `)
+    .get();
+
+  return [active, awaitingVerification, disputed]
+    .filter(Boolean)
+    .map(rowToComplaint);
 }
 
 export function getDisputedClosures({ circle, limit = 10 } = {}, database = getDb()) {

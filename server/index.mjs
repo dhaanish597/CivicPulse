@@ -25,6 +25,7 @@ import {
   getLatestCitizenProofEvidence,
   updateVerification,
   getVerificationStats,
+  getDemoReportCandidates,
 } from './db.mjs';
 import { classifyImage } from './nvidia.mjs';
 import { runResolution } from './agents/resolutionAgent.mjs';
@@ -59,6 +60,44 @@ const upload = multer({
   },
 });
 
+// Round 2 Task 4 (ROUND2.md §4.3): CORS must survive the actual deployment
+// topology — frontend on Vercel (production domain + unpredictable
+// per-branch/per-PR preview subdomains a judge could be sent to), backend on
+// Render. `ALLOWED_ORIGIN` (see .env.example) holds a comma-separated list
+// of exact production origin(s), e.g. "https://civicpulse.vercel.app". On
+// top of whatever's configured there, every "*.vercel.app" origin is always
+// trusted — Vercel preview URLs can't be enumerated in advance, so refusing
+// them all would silently break the exact judge-clicks-a-preview-link
+// scenario this task exists to protect against. `cors`'s own array-based
+// `origin` option supports a mix of exact strings and RegExp entries
+// natively (see node_modules/cors/lib/index.js#isOriginAllowed) — no custom
+// origin callback needed.
+//
+// In development (default, no NODE_ENV=production) this stays wide open
+// ('*'), unchanged from the pre-Task-4 behavior, so local iteration across
+// devices on the same network (e.g. testing from a phone against a laptop
+// dev server) keeps working without any env var setup.
+const VERCEL_PREVIEW_ORIGIN = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
+
+function buildCorsOptions(isProd) {
+  if (!isProd) {
+    return { origin: '*' };
+  }
+
+  const configuredOrigins = (process.env.ALLOWED_ORIGIN || '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  // Not `false`-on-empty like the pre-Task-4 default: even with
+  // ALLOWED_ORIGIN unset (e.g. a human forgot to fill in Render's
+  // `sync: false` env var — a real, documented failure mode in render.yaml),
+  // the Vercel preview pattern alone still lets the actual deployed frontend
+  // through, since this app's frontend is always hosted on Vercel per
+  // vercel.json/render.yaml's split topology.
+  return { origin: [...configuredOrigins, VERCEL_PREVIEW_ORIGIN] };
+}
+
 function extFromMime(mimeType) {
   const map = {
     'image/jpeg': '.jpg',
@@ -80,13 +119,21 @@ const isProduction = process.env.NODE_ENV === 'production';
 
 app.use(express.json({ limit: '16mb' }));
 
-app.use(cors({
-  origin: process.env.ALLOWED_ORIGIN || (process.env.NODE_ENV === 'production' ? false : '*'),
-}));
+app.use(cors(buildCorsOptions(isProduction)));
 
 // Serves uploaded evidence photos (server/uploads/) so they're viewable by URL —
 // e.g. by the verificationAgent's own vision call and, later, the Task 3 frontend.
 app.use('/uploads', express.static(uploadsDir));
+
+// Round 2 Task 4 (ROUND2.md §4.1): a bare, un-namespaced health route — cheap,
+// no DB write, no auth — meant purely as an uptime-pinger target (see H2 in
+// ROUND2.md §10) to keep Render's free-tier instance from spinning down
+// between judge visits. GET /api/health above already exists and is kept
+// as-is since other things may depend on its `{ status: 'ok' }` shape; this
+// is deliberately a separate, minimal route rather than a replacement.
+app.get('/health', (_req, res) => {
+  res.json({ ok: true, ts: new Date().toISOString() });
+});
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
@@ -282,6 +329,16 @@ app.get('/api/verification-stats', (_req, res) => {
   res.json(getVerificationStats());
 });
 
+// Round 2 Task 4, Step 8: backs TrackMyReports.tsx's "Demo data — load
+// sample reports" button. Returns up to 3 real complaints currently in the
+// DB — one in an early/active state, one 'resolution_claimed', one
+// 'disputed' — omitting any slot that doesn't exist yet (see
+// getDemoReportCandidates in db.mjs for why this is looked up dynamically
+// rather than hardcoded). No DB write, no auth, read-only.
+app.get('/api/demo-reports', (_req, res) => {
+  res.json(getDemoReportCandidates());
+});
+
 app.post('/api/route-check', async (req, res) => {
   try {
     const { originLat, originLng, destLat, destLng } = req.body;
@@ -370,18 +427,23 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-if (isProduction) {
-  const distPath = path.join(root, 'dist');
-  app.use(express.static(distPath));
-  app.use((req, res, next) => {
-    if (req.method !== 'GET') {
-      next();
-      return;
-    }
-
-    res.sendFile(path.join(distPath, 'index.html'));
-  });
-} else {
+// Round 2 Task 4 (Orientation audit, server/index.mjs:172-192): the
+// isProduction branch that used to serve dist/ here was dead code in this
+// app's actual deployment topology — the backend (Render) and frontend
+// (Vercel, serving dist/ itself via vercel.json's rewrite-to-index.html) are
+// two separate services, so this server process never needs to serve the
+// production frontend build at all; the old branch only produced a
+// startup-time ENOENT when a fresh checkout had no dist/ present. It is
+// simply deleted, not replaced — in production this backend is API-only
+// (server/index.mjs's /health, /api/*, /uploads/* routes above), with no
+// static/SPA fallback registered.
+//
+// The Vite dev-middleware branch below is kept guarded behind !isProduction
+// exactly as before (just de-nested from the removed if/else) — it's what
+// lets `npm run dev` serve the full SPA locally in one process, and `vite`
+// is a devDependency that a production install may not even have present,
+// so this must never run when NODE_ENV=production.
+if (!isProduction) {
   const { createServer: createViteServer } = await import('vite');
   const vite = await createViteServer({
     root,

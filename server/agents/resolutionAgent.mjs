@@ -2,6 +2,10 @@ import { generateNvidiaContent, NVIDIA_CHAT_MODEL } from '../nvidia.mjs';
 import { detectHotspots } from '../analytics.mjs';
 import { listComplaints, updateComplaintStatus, insertStatusEvent } from '../db.mjs';
 import { generateId } from '../utils.mjs';
+import { hashKey, withCache } from '../cache.mjs';
+
+// Round 2 Task 4, Step 2: bump if the lead-generation prompt below changes shape.
+const LEAD_PROMPT_VERSION = 'v1';
 
 export async function runResolution(complaint, status, actor = 'agent', note = null) {
   let lead = complaint.lead;
@@ -46,13 +50,30 @@ Write one short, actionable sentence (under 30 words) summarizing the priority a
 For example: "3 similar Garbage Overflow reports within 200m in the last 5 days — treat as a cluster, flag to Ward 8 sanitation as a single high-priority route stop rather than three separate pickups."`;
 
   try {
-    const data = await generateNvidiaContent({
-      model: NVIDIA_CHAT_MODEL,
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: 100,
-      temperature: 0.2,
+    // Keyed on the full context string fed into the prompt (ward, category,
+    // severity, days open, nearby-similar count, hotspot rank) — identical
+    // context (the common case: a judge re-viewing the same complaint within
+    // the cache TTL) hits cache with zero NVIDIA calls; any real change in
+    // context (new nearby complaints, hotspot status shifting) naturally
+    // busts the cache since the key itself changes.
+    const cacheKey = hashKey(['lead', LEAD_PROMPT_VERSION, contextStr]);
+
+    const leadText = await withCache(cacheKey, async () => {
+      const data = await generateNvidiaContent({
+        model: NVIDIA_CHAT_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 100,
+        temperature: 0.2,
+      });
+      const text = data.choices?.[0]?.message?.content?.trim();
+      if (!text) {
+        // Never cache an empty result — fall through to the rule-based
+        // fallback below on the very next call too, not a cached blank.
+        throw new Error('NVIDIA API returned no lead text.');
+      }
+      return text;
     });
-    const leadText = data.choices?.[0]?.message?.content?.trim();
+
     if (leadText) return leadText;
   } catch (error) {
     console.warn('NVIDIA API failed to generate lead, using fallback.', error.message);

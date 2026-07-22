@@ -52,7 +52,30 @@ export async function callNvidia(body) {
   return text;
 }
 
-export async function generateNvidiaContent(body, retries = 2) {
+// Round 2 Task 4, Step 2 (Orientation Finding #9 / ROUND2.md §4.2): this
+// retry loop was already live before Task 4 (confirmed by reading it, not
+// assumed) — linear backoff (`attempt * 1000`ms: 1s, 2s), 2 retries, only
+// on 429/5xx. Decision: bumped to true exponential backoff (1s, 2s, 4s) with
+// one extra retry (3 total), rather than left as-is or made much more
+// aggressive. Reasoning:
+//   - The new response cache (server/cache.mjs, wrapped around every
+//     NVIDIA-calling agent) is now the primary defense against the actual
+//     stated risk in ROUND2.md §4.2 ("judges clicking around will burn the
+//     free-tier quota") — repeat views of the same demo complaint no longer
+//     call NVIDIA at all, so this retry loop's job shrinks to just
+//     absorbing genuine first-time transient failures.
+//   - A hackathon judge's session is bursty-but-light, not sustained
+//     concurrent load — 1s+2s+4s (7s worst case across 3 retries) covers
+//     more of a per-second-bucket 429 than the old 1s+2s (3s) did, without
+//     making a judge stare at a spinner long enough to read as broken (still
+//     comfortably under classificationService.ts's 20s client-side
+//     AbortController timeout, the tightest budget any caller currently has).
+//   - True unbounded/steeper exponential (e.g. 1s,2s,4s,8s,16s+) was
+//     considered and rejected: NVIDIA free-tier 429 windows are typically
+//     per-minute, so no bounded in-request backoff fully absorbs a sustained
+//     block anyway — past ~7s added latency it stops helping and just makes
+//     a broken-looking wait longer.
+export async function generateNvidiaContent(body, retries = 3) {
   const apiKey = process.env.NVIDIA_API_KEY;
   if (!apiKey) {
     const error = new Error('NVIDIA_API_KEY is not configured.');
@@ -63,7 +86,8 @@ export async function generateNvidiaContent(body, retries = 2) {
   let lastError;
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) {
-      await new Promise(resolve => setTimeout(resolve, attempt * 1000));
+      const delayMs = Math.min(2 ** (attempt - 1) * 1000, 8000);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
     }
 
     const response = await fetch(NVIDIA_ENDPOINT, {

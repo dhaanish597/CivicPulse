@@ -1,5 +1,11 @@
 import { categories } from '../data/localities.mjs';
 import { classifyImage } from '../nvidia.mjs';
+import { hashKey, withCache } from '../cache.mjs';
+
+// Round 2 Task 4, Step 2: bump when buildClassificationPrompt() (nvidia.mjs)
+// changes shape, so old cached results under a stale prompt version are
+// never served for a differently-worded prompt.
+const CLASSIFY_PROMPT_VERSION = 'v1';
 
 const categoryKeywords = {
   'Garbage Overflow': ['garbage', 'trash', 'waste', 'rubbish', 'dump', 'overflow', 'bin', 'dustbin'],
@@ -12,10 +18,22 @@ const categoryKeywords = {
 
 export async function runClassification(ingested) {
   try {
-    const result = await classifyImage({
+    // Keyed on the exact meaningful input — prompt version + text note +
+    // image bytes/mimeType — so a re-submission of the same photo/note (a
+    // judge re-viewing a demo complaint, a retried request) never re-calls
+    // NVIDIA at all (server/cache.mjs, ROUND2.md §4.2).
+    const cacheKey = hashKey([
+      'classify',
+      CLASSIFY_PROMPT_VERSION,
+      ingested.textNote,
+      ingested.image?.mimeType,
+      ingested.image?.data,
+    ]);
+
+    const result = await withCache(cacheKey, () => classifyImage({
       textNote: ingested.textNote,
       image: ingested.image,
-    });
+    }));
 
     return { ...result, fallback: false };
   } catch (error) {
