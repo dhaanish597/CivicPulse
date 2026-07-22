@@ -54,7 +54,16 @@ const FAILURE_RESULT = {
  * FAILURE_RESULT above, they never propagate as an unhandled error and never
  * get silently upgraded to a real verdict.
  */
-export async function runVerification(complaint, intakeImagePath, citizenProofImagePath) {
+// Round 2 Task 5: pulled out of runVerification() below so evals/run_verification_eval.mjs
+// can get a real verdict without runVerification()'s DB-mutation tail (insertAgentTrace,
+// updateComplaintStatus, escalateSeverity, insertStatusEvent) — those assume `complaint`
+// is a real row in the `complaints` table (escalateSeverity() re-reads it via
+// getComplaintById() and returns null for a synthetic eval id, which crashed
+// runVerification()'s own scoreUrgency() call on a 'disputed' verdict during Task 5
+// testing; see task-5-report.md). runVerification() below is unchanged in behavior — it
+// just calls this first — so its existing contract (return shape, DB writes) is identical
+// to before this refactor.
+export async function adjudicateVerification(complaint, intakeImagePath, citizenProofImagePath) {
   let result;
   try {
     // Keyed on complaint id + both evidence image paths (each evidence
@@ -72,7 +81,11 @@ export async function runVerification(complaint, intakeImagePath, citizenProofIm
     result = { ...FAILURE_RESULT };
   }
 
-  result = applyGuardrails(result);
+  return applyGuardrails(result);
+}
+
+export async function runVerification(complaint, intakeImagePath, citizenProofImagePath) {
+  const result = await adjudicateVerification(complaint, intakeImagePath, citizenProofImagePath);
 
   insertAgentTrace({
     id: generateId('TRC'),
@@ -139,17 +152,22 @@ export async function runVerification(complaint, intakeImagePath, citizenProofIm
 // two descriptions and produces the strict JSON verdict. The retry-once-on-
 // invalid-JSON pattern from classifyImage() is preserved on that final call.
 async function callVerificationModel(complaint, intakeImagePath, citizenProofImagePath) {
-  const intakeDescription = await describeImage(intakeImagePath, 'ORIGINAL INTAKE PHOTO (the reported issue)');
-  const citizenProofDescription = await describeImage(citizenProofImagePath, "CITIZEN COUNTER-EVIDENCE PHOTO (submitted independently by the citizen — never the officer — specifically to verify whether the officer's resolution claim is genuine)");
+  const intakeDescription = await describeImage(intakeImagePath, 'ORIGINAL INTAKE PHOTO (the reported issue)', complaint.id);
+  const citizenProofDescription = await describeImage(citizenProofImagePath, "CITIZEN COUNTER-EVIDENCE PHOTO (submitted independently by the citizen — never the officer — specifically to verify whether the officer's resolution claim is genuine)", complaint.id);
 
   const messages = [{ role: 'user', content: buildVerificationPrompt(complaint, intakeDescription, citizenProofDescription) }];
 
+  // Round 2 Task 5: agent_step 'verification_adjudicate' — kept distinct from
+  // 'verification_describe' (see describeImage() below) in run_metrics, since
+  // the two call shapes (vision-describe vs. text-adjudicate) have genuinely
+  // different token/latency profiles and lumping them together would blur
+  // both the p50/p95 latency stats and the cost model's arithmetic.
   let text = await callNvidia({
     model: NVIDIA_CHAT_MODEL,
     messages,
     max_tokens: 512,
     temperature: 0.2,
-  });
+  }, { agentStep: 'verification_adjudicate', complaintId: complaint.id });
 
   try {
     return validateVerification(JSON.parse(stripCodeFence(text)));
@@ -164,7 +182,7 @@ async function callVerificationModel(complaint, intakeImagePath, citizenProofIma
       messages,
       max_tokens: 512,
       temperature: 0.1,
-    });
+    }, { agentStep: 'verification_adjudicate', complaintId: complaint.id });
     return validateVerification(JSON.parse(stripCodeFence(text)));
   }
 }
@@ -175,7 +193,7 @@ async function callVerificationModel(complaint, intakeImagePath, citizenProofIma
 // citizen_proof usually changes between attempts after an 'inconclusive'
 // result — so this is a real second win beyond the outer
 // verify-adjudicate cache when only one of the two photos actually changed).
-async function describeImage(imagePath, label) {
+async function describeImage(imagePath, label, complaintId) {
   const cacheKey = hashKey(['verify-describe', DESCRIBE_PROMPT_VERSION, label, imagePath]);
 
   return withCache(cacheKey, async () => {
@@ -193,7 +211,7 @@ async function describeImage(imagePath, label) {
       messages: [{ role: 'user', content }],
       max_tokens: 200,
       temperature: 0.2,
-    });
+    }, { agentStep: 'verification_describe', complaintId });
 
     return text.trim();
   });

@@ -26,7 +26,7 @@ export async function runPipeline(complaintInput) {
   const ingested = runIngestion(complaintInput);
   addTrace(trace, 'Ingestion', `Accepted ${ingested.source} report for Ward ${ingested.ward} (${ingested.locality}) with ${ingested.image ? 'photo' : 'text-only'} evidence.`);
 
-  const classification = await runClassification(ingested);
+  const classification = await runClassification(ingested, candidateId);
   addTrace(
     trace,
     'Classification',

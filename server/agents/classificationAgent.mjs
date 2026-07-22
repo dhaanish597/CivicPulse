@@ -16,7 +16,11 @@ const categoryKeywords = {
   'Stray Animal Hazard': ['dog', 'animal', 'stray', 'monkey', 'cow', 'pig', 'cat', 'bite', 'attack'],
 };
 
-export async function runClassification(ingested) {
+// Round 2 Task 5: `complaintId` is optional (defaults null) — the orchestrator
+// passes the candidate complaint's real id (generated before this runs, see
+// agents/orchestrator.mjs) so run_metrics rows can be attributed to it; any
+// other caller (none currently) that omits it behaves exactly as before.
+export async function runClassification(ingested, complaintId = null) {
   try {
     // Keyed on the exact meaningful input — prompt version + text note +
     // image bytes/mimeType — so a re-submission of the same photo/note (a
@@ -33,6 +37,7 @@ export async function runClassification(ingested) {
     const result = await withCache(cacheKey, () => classifyImage({
       textNote: ingested.textNote,
       image: ingested.image,
+      complaintId,
     }));
 
     return { ...result, fallback: false };

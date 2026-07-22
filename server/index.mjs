@@ -26,6 +26,7 @@ import {
   updateVerification,
   getVerificationStats,
   getDemoReportCandidates,
+  getMetricsSummary,
 } from './db.mjs';
 import { classifyImage } from './nvidia.mjs';
 import { runResolution } from './agents/resolutionAgent.mjs';
@@ -327,6 +328,15 @@ app.post('/api/complaints/:id/verify', async (req, res) => {
 
 app.get('/api/verification-stats', (_req, res) => {
   res.json(getVerificationStats());
+});
+
+// Round 2 Task 5 (ROUND2.md §5.3): p50/p95 latency per agent_step, plus mean
+// tokens and estimated cost per complaint, computed live from run_metrics —
+// see getMetricsSummary() in server/db.mjs for the exact aggregation. No
+// auth, read-only, cheap (run_metrics stays small — one row per real NVIDIA
+// call, never per cache hit).
+app.get('/api/metrics/summary', (_req, res) => {
+  res.json(getMetricsSummary());
 });
 
 // Round 2 Task 4, Step 8: backs TrackMyReports.tsx's "Demo data — load

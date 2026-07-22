@@ -1,17 +1,24 @@
 import { categories } from './data/localities.mjs';
+import { recordRunMetric } from './metrics.mjs';
 
 export const NVIDIA_VISION_MODEL = 'meta/llama-3.2-11b-vision-instruct';
 export const NVIDIA_CHAT_MODEL = 'meta/llama-3.1-70b-instruct';
 const NVIDIA_ENDPOINT = 'https://integrate.api.nvidia.com/v1/chat/completions';
 
-export async function classifyImage({ textNote = '', image = null }) {
+// Round 2 Task 5: `complaintId` is a new, optional field — every existing
+// caller (the /api/classify raw-preview route, the eval scripts) omits it
+// and behaves exactly as before; classifyImage()'s return shape is
+// unchanged. It exists only so run_metrics rows produced by the pipeline
+// path (server/agents/classificationAgent.mjs, called with the complaint's
+// real id) can be attributed to that complaint — see server/metrics.mjs.
+export async function classifyImage({ textNote = '', image = null, complaintId = null }) {
   const content = [];
   content.push({ type: 'text', text: buildClassificationPrompt(textNote) });
-  
+
   if (image) {
-    content.push({ 
-      type: 'image_url', 
-      image_url: { url: `data:${image.mimeType};base64,${image.data}` } 
+    content.push({
+      type: 'image_url',
+      image_url: { url: `data:${image.mimeType};base64,${image.data}` }
     });
   }
 
@@ -22,28 +29,51 @@ export async function classifyImage({ textNote = '', image = null }) {
     messages,
     max_tokens: 1024,
     temperature: 0.2,
-  });
+  }, { agentStep: 'classification', complaintId });
 
   try {
     return validateClassification(JSON.parse(stripCodeFence(text)));
   } catch (error) {
-    // Retry once with a stricter message if validation/parsing fails
+    // Retry once with a stricter message if validation/parsing fails. This is
+    // a second real NVIDIA call — it gets its own run_metrics row (agent_step
+    // 'classification' again), which is the honest reflection of what
+    // actually happened: 2 real calls, not 1 (see task-5-report.md's call-
+    // count notes).
     messages.push({ role: 'assistant', content: text });
     messages.push({ role: 'user', content: 'Your previous response was invalid. Return ONLY a valid JSON object matching the schema. Do not include prose or code fences.' });
-    
+
     text = await callNvidia({
       model: NVIDIA_VISION_MODEL,
       messages,
       max_tokens: 1024,
       temperature: 0.1,
-    });
+    }, { agentStep: 'classification', complaintId });
     return validateClassification(JSON.parse(stripCodeFence(text)));
   }
 }
 
-export async function callNvidia(body) {
+// Round 2 Task 5: `meta` is new and optional (`{ agentStep, complaintId }`).
+// Every pre-existing call site is updated below to pass it so its real
+// duration/tokens/cost land in run_metrics (server/metrics.mjs) — but the
+// function's return value (just `text`, same as before) is unchanged, so
+// nothing about its existing contract breaks for any caller that doesn't
+// pass `meta`. Only successful calls are recorded: a failed call returns no
+// `usage` to attribute a real cost to, and the existing fallback paths in
+// each caller already handle failure without needing a metrics row.
+export async function callNvidia(body, meta = {}) {
+  const startedAt = Date.now();
   const data = await generateNvidiaContent(body);
   const text = extractText(data);
+
+  if (meta.agentStep) {
+    recordRunMetric({
+      agentStep: meta.agentStep,
+      complaintId: meta.complaintId ?? null,
+      model: body.model,
+      durationMs: Date.now() - startedAt,
+      usage: data.usage,
+    });
+  }
 
   if (!text) {
     throw new Error('NVIDIA API returned no text.');

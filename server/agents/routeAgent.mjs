@@ -3,6 +3,7 @@ import { listComplaints } from '../db.mjs';
 import { detectHotspots } from '../analytics.mjs';
 import { generateNvidiaContent, NVIDIA_CHAT_MODEL } from '../nvidia.mjs';
 import { hashKey, withCache } from '../cache.mjs';
+import { recordRunMetric } from '../metrics.mjs';
 
 // Round 2 Task 4, Step 2: bump if the advisory prompt below changes shape.
 const ROUTE_ADVISORY_PROMPT_VERSION = 'v1';
@@ -91,6 +92,7 @@ Alternatives available: ${altIndex !== undefined ? 'Yes (cleaner alternative fou
       const cacheKey = hashKey(['route-advisory', ROUTE_ADVISORY_PROMPT_VERSION, context]);
 
       advisory = await withCache(cacheKey, async () => {
+        const startedAt = Date.now();
         const data = await generateNvidiaContent({
           model: NVIDIA_CHAT_MODEL,
           messages: [{
@@ -103,6 +105,19 @@ Write a 1-2 sentence plain-language advisory summarizing the hazards. If an alte
           }],
           max_tokens: 100,
           temperature: 0.2,
+        });
+        // Round 2 Task 5: complaintId is null — a route advisory isn't tied
+        // to one complaint, it's evaluated against every currently-flagged
+        // complaint along a route (see evaluateRoute() above), so there's no
+        // single id to attribute it to. Still logged for p50/p95 latency and
+        // its own cost, just excluded from the per-complaint cost average
+        // (see getMetricsSummary in server/db.mjs).
+        recordRunMetric({
+          agentStep: 'route_advisory',
+          complaintId: null,
+          model: NVIDIA_CHAT_MODEL,
+          durationMs: Date.now() - startedAt,
+          usage: data.usage,
         });
         const text = data.choices?.[0]?.message?.content?.trim();
         if (!text) {

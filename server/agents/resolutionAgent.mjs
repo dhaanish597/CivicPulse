@@ -3,6 +3,7 @@ import { detectHotspots } from '../analytics.mjs';
 import { listComplaints, updateComplaintStatus, insertStatusEvent } from '../db.mjs';
 import { generateId } from '../utils.mjs';
 import { hashKey, withCache } from '../cache.mjs';
+import { recordRunMetric } from '../metrics.mjs';
 
 // Round 2 Task 4, Step 2: bump if the lead-generation prompt below changes shape.
 const LEAD_PROMPT_VERSION = 'v1';
@@ -59,11 +60,21 @@ For example: "3 similar Garbage Overflow reports within 200m in the last 5 days 
     const cacheKey = hashKey(['lead', LEAD_PROMPT_VERSION, contextStr]);
 
     const leadText = await withCache(cacheKey, async () => {
+      const startedAt = Date.now();
       const data = await generateNvidiaContent({
         model: NVIDIA_CHAT_MODEL,
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 100,
         temperature: 0.2,
+      });
+      // Round 2 Task 5: inside the withCache callback, so this only runs (and
+      // only logs) on a real cache-miss NVIDIA call — never on a cache hit.
+      recordRunMetric({
+        agentStep: 'resolution_lead',
+        complaintId: complaint.id,
+        model: NVIDIA_CHAT_MODEL,
+        durationMs: Date.now() - startedAt,
+        usage: data.usage,
       });
       const text = data.choices?.[0]?.message?.content?.trim();
       if (!text) {

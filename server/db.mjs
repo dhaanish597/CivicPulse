@@ -154,6 +154,35 @@ export function initSchema(database = getDb()) {
     CREATE INDEX IF NOT EXISTS idx_llm_cache_created_at ON llm_cache (created_at);
   `);
 
+  // Round 2 Task 5 (ROUND2.md §5.3): cost/latency instrumentation. One row
+  // per REAL NVIDIA call (never a cache hit — see server/metrics.mjs), across
+  // every NVIDIA-calling agent step: 'classification' (classifyImage, via
+  // server/nvidia.mjs), 'verification_describe' and 'verification_adjudicate'
+  // (server/agents/verificationAgent.mjs — 2 vision + 1 chat call per
+  // verification, a proven-necessary deviation from a 1-call design; see
+  // task-2-report.md), 'resolution_lead' (server/agents/resolutionAgent.mjs),
+  // and 'route_advisory' (server/agents/routeAgent.mjs). Brand-new table, so
+  // it uses the same plain CREATE-TABLE-IF-NOT-EXISTS shape as
+  // llm_cache/evidence/agent_traces above rather than the PRAGMA
+  // table_info-guarded ALTER pattern (that pattern is only needed when adding
+  // a column to a table that may already exist with rows in it). Schema
+  // exactly matches the Task 5 brief.
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS run_metrics (
+      id TEXT PRIMARY KEY,
+      complaint_id TEXT,
+      agent_step TEXT NOT NULL,
+      duration_ms INTEGER NOT NULL,
+      prompt_tokens INTEGER,
+      completion_tokens INTEGER,
+      estimated_cost_usd REAL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_run_metrics_agent_step ON run_metrics (agent_step);
+    CREATE INDEX IF NOT EXISTS idx_run_metrics_complaint_id ON run_metrics (complaint_id);
+  `);
+
   populateWardReferenceTable(database);
 }
 
@@ -517,6 +546,99 @@ export function getDisputedClosures({ circle, limit = 10 } = {}, database = getD
     verification_reasoning: row.verification_reasoning,
     verified_at: row.verified_at,
   }));
+}
+
+export function insertRunMetric(metric, database = getDb()) {
+  const row = {
+    id: metric.id,
+    complaint_id: metric.complaintId ?? null,
+    agent_step: metric.agentStep,
+    duration_ms: metric.durationMs,
+    prompt_tokens: metric.promptTokens ?? null,
+    completion_tokens: metric.completionTokens ?? null,
+    estimated_cost_usd: metric.estimatedCostUsd ?? null,
+    created_at: metric.createdAt ?? new Date().toISOString(),
+  };
+
+  database
+    .prepare(`
+      INSERT INTO run_metrics (
+        id, complaint_id, agent_step, duration_ms, prompt_tokens, completion_tokens, estimated_cost_usd, created_at
+      ) VALUES (
+        @id, @complaint_id, @agent_step, @duration_ms, @prompt_tokens, @completion_tokens, @estimated_cost_usd, @created_at
+      )
+    `)
+    .run(row);
+
+  return row;
+}
+
+// Round 2 Task 5, Step 5 (ROUND2.md §5.3): backs GET /api/metrics/summary.
+// p50/p95 latency per agent_step (nearest-rank percentile — simple, standard,
+// no interpolation needed at this data volume), plus mean total tokens and
+// mean estimated cost PER COMPLAINT (summed across every agent_step row that
+// shares a complaint_id, then averaged across complaints — a complaint that
+// went through classification + a 3-call verification counts all 4 rows
+// toward its own total). Rows with a null complaint_id (route_advisory, and
+// any classification call made outside the complaint pipeline, e.g. the
+// eval scripts or the raw /api/classify preview route) are included in the
+// per-agent_step latency stats but excluded from the per-complaint tokens/
+// cost average, since they can't be attributed to one complaint.
+export function getMetricsSummary(database = getDb()) {
+  const rows = database.prepare('SELECT * FROM run_metrics').all();
+
+  const rowsByStep = new Map();
+  for (const row of rows) {
+    if (!rowsByStep.has(row.agent_step)) rowsByStep.set(row.agent_step, []);
+    rowsByStep.get(row.agent_step).push(row);
+  }
+
+  const by_agent_step = {};
+  for (const [step, stepRows] of rowsByStep) {
+    const durations = stepRows.map((r) => r.duration_ms).sort((a, b) => a - b);
+    const costs = stepRows.map((r) => r.estimated_cost_usd).filter((c) => c !== null);
+    by_agent_step[step] = {
+      count: stepRows.length,
+      p50_duration_ms: percentile(durations, 0.5),
+      p95_duration_ms: percentile(durations, 0.95),
+      mean_estimated_cost_usd: costs.length ? round6(costs.reduce((s, c) => s + c, 0) / costs.length) : null,
+    };
+  }
+
+  const byComplaint = new Map();
+  for (const row of rows) {
+    if (!row.complaint_id) continue;
+    if (!byComplaint.has(row.complaint_id)) byComplaint.set(row.complaint_id, { tokens: 0, cost: 0 });
+    const bucket = byComplaint.get(row.complaint_id);
+    bucket.tokens += (row.prompt_tokens ?? 0) + (row.completion_tokens ?? 0);
+    bucket.cost += row.estimated_cost_usd ?? 0;
+  }
+
+  const complaintBuckets = Array.from(byComplaint.values());
+  const mean_tokens_per_complaint = complaintBuckets.length
+    ? Math.round(complaintBuckets.reduce((s, b) => s + b.tokens, 0) / complaintBuckets.length)
+    : null;
+  const mean_estimated_cost_usd_per_complaint = complaintBuckets.length
+    ? round6(complaintBuckets.reduce((s, b) => s + b.cost, 0) / complaintBuckets.length)
+    : null;
+
+  return {
+    total_calls: rows.length,
+    complaints_with_metrics: complaintBuckets.length,
+    by_agent_step,
+    mean_tokens_per_complaint,
+    mean_estimated_cost_usd_per_complaint,
+  };
+}
+
+function percentile(sortedValues, p) {
+  if (sortedValues.length === 0) return null;
+  const idx = Math.max(0, Math.min(sortedValues.length - 1, Math.ceil(p * sortedValues.length) - 1));
+  return sortedValues[idx];
+}
+
+function round6(value) {
+  return Number(value.toFixed(6));
 }
 
 function round4(value) {
