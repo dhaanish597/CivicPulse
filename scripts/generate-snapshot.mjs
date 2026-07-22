@@ -13,15 +13,20 @@
 // never depends on the dev server having been started first.
 //
 // Defensive by design: this script must NEVER be able to break `npm run
-// build`. Any failure while reading the DB falls back to writing a small,
-// honestly-labelled empty snapshot (source: 'fallback-empty') instead of
-// throwing and aborting the whole build — see main() below.
+// build`. Any failure while reading the DB — including '../server/db.mjs'
+// and '../server/seed.mjs' failing to even load (both transitively import
+// the native 'better-sqlite3' addon, which can fail at import time if a
+// build platform lacks a matching prebuilt binary for its OS/Node ABI) —
+// falls back to writing a small, honestly-labelled empty snapshot (source:
+// 'fallback-empty') instead of throwing and aborting the whole build. Those
+// two modules are therefore imported dynamically *inside* buildSnapshot(),
+// so the same try/catch in main() covers both the imports and the query
+// logic. '../server/analytics.mjs' has no imports of its own (pure
+// functions only), so it can't fail at load time and stays a static import.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { detectHotspots } from '../server/analytics.mjs';
-import { getVerificationStats, listComplaints } from '../server/db.mjs';
-import { seedIfEmpty } from '../server/seed.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const outputPath = path.join(__dirname, '..', 'public', 'snapshot.json');
@@ -35,7 +40,15 @@ const outputPath = path.join(__dirname, '..', 'public', 'snapshot.json');
 // (listComplaints() already orders by reported_at DESC).
 const MAX_COMPLAINTS = 400;
 
-function buildSnapshot() {
+async function buildSnapshot() {
+  // Dynamic + inside this function (called only from within main()'s
+  // try/catch) so a native-module load failure in either module is caught
+  // right alongside every other failure mode — see header comment.
+  const [{ seedIfEmpty }, { getVerificationStats, listComplaints }] = await Promise.all([
+    import('../server/seed.mjs'),
+    import('../server/db.mjs'),
+  ]);
+
   seedIfEmpty();
 
   const allComplaints = listComplaints();
@@ -76,10 +89,10 @@ function emptyFallbackSnapshot(reason) {
   };
 }
 
-function main() {
+async function main() {
   let snapshot;
   try {
-    snapshot = buildSnapshot();
+    snapshot = await buildSnapshot();
   } catch (error) {
     console.error(
       '[generate-snapshot] Failed to build snapshot from the seeded DB — writing an empty fallback instead so `npm run build` is never blocked by this script.',
@@ -96,4 +109,4 @@ function main() {
   );
 }
 
-main();
+await main();
