@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ArrowRight, Camera, CheckCircle, Clock, Loader, Sparkles, ThumbsDown, ThumbsUp } from 'lucide-react';
-import { EvidenceKind, VerificationVerdict } from '../types';
-import { updateComplaintStatus, uploadEvidence, verifyResolution } from '../services';
-import { fetchEvidence, getCachedEvidenceUrls, pickLatestEvidenceByKind } from '../services/verificationService';
+import { EvidenceKind, EvidenceRecord, VerificationVerdict } from '../types';
+import { StatusUpdateError, updateComplaintStatus, uploadEvidence, verifyResolution } from '../services';
+import { fetchEvidence, getCachedEvidenceUrls, pickLatestEvidenceByKind, VerificationApiError } from '../services/verificationService';
 import { VerificationPanel } from './VerificationPanel';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5173';
@@ -27,6 +27,20 @@ function isVerdict(value: string | undefined): value is VerificationVerdict {
   return value === 'verified' || value === 'disputed' || value === 'inconclusive';
 }
 
+/** fetchEvidence() returns oldest-to-newest (see verificationService.ts) — the last citizen_proof row is the latest one. */
+function latestCitizenProofCreatedAt(records: EvidenceRecord[]): string | undefined {
+  const citizenProofs = records.filter((r) => r.kind === 'citizen_proof');
+  return citizenProofs.length > 0 ? citizenProofs[citizenProofs.length - 1].createdAt : undefined;
+}
+
+/** Most recent 'resolution_claimed' status_event — marks when the CURRENT verification cycle began. */
+function latestClaimedAt(statusEvents: ReportDetails['status_events']): string | undefined {
+  for (let i = statusEvents.length - 1; i >= 0; i -= 1) {
+    if (statusEvents[i].status === 'resolution_claimed') return statusEvents[i].createdAt;
+  }
+  return undefined;
+}
+
 export const TrackMyReports: React.FC = () => {
   const [reports, setReports] = useState<TrackedReport[]>([]);
   const [details, setDetails] = useState<Record<string, ReportDetails>>({});
@@ -36,6 +50,20 @@ export const TrackMyReports: React.FC = () => {
   // localStorage cache first so a photo this same browser just
   // uploaded/received shows instantly without waiting on the round trip.
   const [evidence, setEvidence] = useState<Record<string, Partial<Record<EvidenceKind, string>>>>({});
+  // Task 6 fix (HUMAN_CHECKLIST "stale cached citizen_proof" deferred item):
+  // when a complaint is disputed and later re-claimed by the officer for a
+  // second resolution_claimed cycle, `evidence[r.id].citizen_proof` above
+  // still resolves to the citizen's PREVIOUS cycle's photo (the latest
+  // citizen_proof row across all time — there's no per-cycle scoping in the
+  // evidence table). Without this, VerifyResolutionCard's "Confirm fixed" /
+  // "Still not fixed" buttons pre-enable using that stale photo instead of
+  // prompting for a fresh one. The backend still honestly re-adjudicates
+  // whatever's actually latest (no security gap — see HUMAN_CHECKLIST), but
+  // it's a real UX trap: a citizen could submit against evidence they never
+  // looked at for this cycle. Tracked here so render-time can compare it
+  // against the most recent 'resolution_claimed' status_event and blank out
+  // the stale URL before it ever reaches VerifyResolutionCard's initial state.
+  const [citizenProofCreatedAt, setCitizenProofCreatedAt] = useState<Record<string, string | undefined>>({});
   const [loading, setLoading] = useState(false);
   const [demoLoading, setDemoLoading] = useState(false);
   const [demoError, setDemoError] = useState('');
@@ -48,6 +76,7 @@ export const TrackMyReports: React.FC = () => {
 
       const detailsMap: Record<string, ReportDetails> = {};
       const evidenceMap: Record<string, Partial<Record<EvidenceKind, string>>> = {};
+      const citizenProofCreatedAtMap: Record<string, string | undefined> = {};
       for (const r of stored) {
         const res = await fetch(`${API_BASE}/api/complaints/${r.id}`);
         if (res.ok) {
@@ -58,6 +87,7 @@ export const TrackMyReports: React.FC = () => {
         try {
           const records = await fetchEvidence(r.id);
           evidenceMap[r.id] = { ...evidenceMap[r.id], ...pickLatestEvidenceByKind(records) };
+          citizenProofCreatedAtMap[r.id] = latestCitizenProofCreatedAt(records);
         } catch (e) {
           // Live evidence fetch failed — fall back to whatever the
           // same-session cache already had (may be nothing, in which case
@@ -67,6 +97,7 @@ export const TrackMyReports: React.FC = () => {
       }
       setDetails(detailsMap);
       setEvidence(evidenceMap);
+      setCitizenProofCreatedAt(citizenProofCreatedAtMap);
     } catch (e) {
       console.error(e);
     } finally {
@@ -92,6 +123,7 @@ export const TrackMyReports: React.FC = () => {
     try {
       const records = await fetchEvidence(id);
       setEvidence((prev) => ({ ...prev, [id]: { ...prev[id], ...pickLatestEvidenceByKind(records) } }));
+      setCitizenProofCreatedAt((prev) => ({ ...prev, [id]: latestCitizenProofCreatedAt(records) }));
     } catch (e) {
       console.error(e);
     }
@@ -226,6 +258,20 @@ export const TrackMyReports: React.FC = () => {
           const showVerifyCard = detail.status === 'resolution_claimed';
           const showVerificationHistory = !showVerifyCard && isVerdict(detail.verificationStatus);
 
+          // Task 6 fix: blank out a citizen_proof URL that predates this
+          // complaint's current resolution_claimed cycle (see
+          // citizenProofCreatedAt's doc comment above) so VerifyResolutionCard
+          // never initializes with a stale photo from a prior claim/dispute
+          // round — the citizen has to upload fresh evidence for THIS claim.
+          const proofUploadedAt = citizenProofCreatedAt[r.id];
+          const currentCycleStartedAt = latestClaimedAt(detail.status_events);
+          const citizenProofIsStale = Boolean(
+            showVerifyCard && currentCycleStartedAt && proofUploadedAt && proofUploadedAt < currentCycleStartedAt
+          );
+          const verifyCardEvidence = citizenProofIsStale
+            ? { ...evidence[r.id], citizen_proof: undefined }
+            : (evidence[r.id] ?? {});
+
           return (
             <div key={r.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden transition-all hover:shadow-md">
               <div className="p-6">
@@ -252,7 +298,7 @@ export const TrackMyReports: React.FC = () => {
                   <VerifyResolutionCard
                     reportId={r.id}
                     detail={detail}
-                    evidenceUrls={evidence[r.id] ?? {}}
+                    evidenceUrls={verifyCardEvidence}
                     onVerified={() => refetchDetail(r.id)}
                   />
                 )}
@@ -347,7 +393,11 @@ const VerifyResolutionCard: React.FC<VerifyResolutionCardProps> = ({ reportId, d
       const evidence = await uploadEvidence(reportId, file, 'citizen_proof');
       setCitizenProofUrl(evidence.imageUrl);
     } catch (error) {
-      setUploadError(error instanceof Error ? error.message : 'Unable to upload your photo.');
+      // Task 6 fix: only trust `.message` from our own controlled API error
+      // classes (server-provided text); a plain network failure throws a raw
+      // browser TypeError instead, which must never render verbatim
+      // (ROUND2.md §8) — same fix as OfficerLeadsBoard.tsx/RoutePlanner.tsx.
+      setUploadError(error instanceof VerificationApiError ? error.message : 'Unable to upload your photo — check your connection and try again.');
     } finally {
       setUploading(false);
     }
@@ -377,11 +427,27 @@ const VerifyResolutionCard: React.FC<VerifyResolutionCardProps> = ({ reportId, d
         // because verification_status is now 'verified', satisfying the
         // 409 gate that blocks any other path to 'resolved'.
         await updateComplaintStatus(reportId, 'resolved', 'Verified via citizen counter-evidence.');
+      } else if (result.verdict === 'inconclusive') {
+        // Task 6 fix (HUMAN_CHECKLIST deferred item): the complaint stays in
+        // 'resolution_claimed' after an inconclusive verdict, so this same
+        // card instance stays mounted (never remounts, unlike the
+        // dispute/re-claim cycle handled by the parent's staleness check
+        // above) — without this, "Confirm fixed"/"Still not fixed" would
+        // stay pre-enabled using the exact same photo that just produced an
+        // inconclusive result. Clearing it forces a deliberate next step —
+        // pick a new/clearer photo — before trying again.
+        setCitizenProofUrl(undefined);
+        if (fileInputRef.current) fileInputRef.current.value = '';
       }
 
       await onVerified();
     } catch (error) {
-      setVerifyError(error instanceof Error ? error.message : 'Unable to verify this resolution.');
+      // Task 6 fix: same rationale as handleFile's catch above.
+      setVerifyError(
+        error instanceof VerificationApiError || error instanceof StatusUpdateError
+          ? error.message
+          : 'Unable to verify this resolution — check your connection and try again.'
+      );
     } finally {
       setVerifying(false);
     }

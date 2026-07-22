@@ -2,8 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Camera, CheckCircle, Activity, Lock, X } from 'lucide-react';
 import { Complaint, EvidenceKind } from '../types';
 import { categoryColors } from '../data/categoryColors';
-import { fetchComplaints, updateComplaintStatus } from '../services';
-import { fetchEvidence, getCachedEvidenceUrls, pickLatestEvidenceByKind, uploadEvidence } from '../services/verificationService';
+import { fetchComplaints, StatusUpdateError, updateComplaintStatus } from '../services';
+import { fetchEvidence, getCachedEvidenceUrls, pickLatestEvidenceByKind, uploadEvidence, VerificationApiError } from '../services/verificationService';
 import { VerificationPanel } from './VerificationPanel';
 
 interface OfficerLeadsBoardProps {
@@ -95,7 +95,17 @@ const LeadCard: React.FC<LeadCardProps> = ({ complaint, onStatusUpdate, onClaimR
       await onClaimResolution(complaint.id, proofFile);
       cancelClaim();
     } catch (error) {
-      setClaimError(error instanceof Error ? error.message : 'Unable to submit proof of resolution.');
+      // Task 6 fix: only show `error.message` for our own controlled API
+      // error classes (server-provided, human-readable text). A plain fetch
+      // failure (offline, CORS, DNS) throws a raw browser TypeError instead
+      // — e.g. "Failed to fetch" — which is not something a citizen or
+      // officer should ever see verbatim (ROUND2.md §8, same class of fix
+      // already applied to TrackMyReports.tsx's demo-data button in Task 4).
+      setClaimError(
+        error instanceof VerificationApiError || error instanceof StatusUpdateError
+          ? error.message
+          : 'Unable to submit proof of resolution — check your connection and try again.'
+      );
     } finally {
       setLoading(false);
     }
@@ -251,8 +261,25 @@ const LeadCard: React.FC<LeadCardProps> = ({ complaint, onStatusUpdate, onClaimR
   );
 };
 
+// Task 6 fix: at real GHMC seed volume (ROUND2.md §2.4, ~600/day) the demo
+// hotspot circle alone carries thousands of open complaints (2,480 for the
+// seeded "Kapra" hotspot at the time of this fix). This board previously
+// rendered a LeadCard — and fired an independent GET .../evidence request —
+// for every single one of them on mount, with no cap. The browser can't
+// sustain that many concurrent requests (confirmed live: ~2,700
+// ERR_INSUFFICIENT_RESOURCES failures in the console on first load of the
+// Kapra circle, the exact circle the demo path uses) and the resulting DOM
+// (tens of thousands of nodes) made the board painfully slow to scroll,
+// especially on mobile. "AI Resolution Leads" is conceptually a prioritized
+// shortlist, not a full backlog dump, so capping to the top N by urgency
+// (already computed and sorted below) is a fix, not a feature loss — the
+// citywide/circle totals are still visible via City Admin and the
+// `{complaints.length} ACTIVE` style summary text below.
+const MAX_RENDERED_LEADS = 25;
+
 export const OfficerLeadsBoard: React.FC<OfficerLeadsBoardProps> = ({ ward, circle }) => {
   const [complaints, setComplaints] = useState<Complaint[]>([]);
+  const [totalActiveCount, setTotalActiveCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   const scopeLabel = circle ? `Circle ${circle}` : `Ward ${ward}`;
@@ -273,7 +300,9 @@ export const OfficerLeadsBoard: React.FC<OfficerLeadsBoardProps> = ({ ward, circ
         const uB = b.severity * 8 + Math.min(b.daysOpen, 30) * 2;
         return uB - uA;
       });
-      setComplaints(sorted.filter((c) => c.status !== 'resolved'));
+      const active = sorted.filter((c) => c.status !== 'resolved');
+      setTotalActiveCount(active.length);
+      setComplaints(active.slice(0, MAX_RENDERED_LEADS));
     } catch (error) {
       console.error(error);
     } finally {
@@ -337,10 +366,18 @@ export const OfficerLeadsBoard: React.FC<OfficerLeadsBoardProps> = ({ ward, circ
             <p className="text-xs text-gray-500 font-medium">{scopeLabel} active dispatch queue</p>
           </div>
         </div>
-        <span className="text-xs bg-gray-900 text-white px-3 py-1 rounded-full font-bold shadow-sm">
-          {complaints.length} ACTIVE
+        <span className="text-xs bg-gray-900 text-white px-3 py-1 rounded-full font-bold shadow-sm whitespace-nowrap">
+          {totalActiveCount > complaints.length
+            ? `TOP ${complaints.length} OF ${totalActiveCount.toLocaleString()}`
+            : `${complaints.length} ACTIVE`}
         </span>
       </div>
+
+      {totalActiveCount > complaints.length && (
+        <p className="px-5 pb-2 -mt-1 text-[11px] text-gray-400 bg-white">
+          Showing the {complaints.length} highest-urgency leads. {(totalActiveCount - complaints.length).toLocaleString()} more open in {scopeLabel} — see City Admin for citywide totals.
+        </p>
+      )}
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4 relative">
         {complaints.length === 0 ? (

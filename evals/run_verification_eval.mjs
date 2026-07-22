@@ -81,43 +81,59 @@ async function main() {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
   const results = [];
+  // Task 6 fix (HUMAN_CHECKLIST deferred item): server/uploads/ is gitignored
+  // so these never risked a commit, but repeated eval runs previously left
+  // every copied EVAL-<case>-before/after file behind permanently, one set
+  // per run. Tracked here and removed in the `finally` below regardless of
+  // how the run ends (success, a per-case skip, or an uncaught crash).
+  const copiedFiles = [];
 
-  for (let i = 0; i < cases.length; i += 1) {
-    const c = cases[i];
-    process.stdout.write(`[${i + 1}/${cases.length}] ${c.name} (label: ${c.label}) ... `);
+  try {
+    for (let i = 0; i < cases.length; i += 1) {
+      const c = cases[i];
+      process.stdout.write(`[${i + 1}/${cases.length}] ${c.name} (label: ${c.label}) ... `);
 
-    const beforeUploadPath = copyIntoUploads(c.beforePath, `EVAL-${sanitize(c.name)}-before`);
-    const afterUploadPath = copyIntoUploads(c.afterPath, `EVAL-${sanitize(c.name)}-after`);
+      const beforeUploadPath = copyIntoUploads(c.beforePath, `EVAL-${sanitize(c.name)}-before`);
+      const afterUploadPath = copyIntoUploads(c.afterPath, `EVAL-${sanitize(c.name)}-after`);
+      copiedFiles.push(beforeUploadPath, afterUploadPath);
 
-    const complaint = {
-      id: `EVAL-${sanitize(c.name)}`,
-      category: 'Reported Issue',
-      description: `Eval pair: ${c.name}`,
-      ward: 0,
-      severity: 3,
-      status: 'resolution_claimed',
-    };
+      const complaint = {
+        id: `EVAL-${sanitize(c.name)}`,
+        category: 'Reported Issue',
+        description: `Eval pair: ${c.name}`,
+        ward: 0,
+        severity: 3,
+        status: 'resolution_claimed',
+      };
 
-    let verdictResult;
-    try {
-      verdictResult = await adjudicateVerification(complaint, beforeUploadPath, afterUploadPath);
-    } catch (error) {
-      console.log(`SKIPPED (${error.message})`);
-      continue;
+      let verdictResult;
+      try {
+        verdictResult = await adjudicateVerification(complaint, beforeUploadPath, afterUploadPath);
+      } catch (error) {
+        console.log(`SKIPPED (${error.message})`);
+        continue;
+      }
+
+      console.log(`verdict "${verdictResult.verdict}" (confidence ${verdictResult.confidence})`);
+
+      results.push({
+        case: c.name,
+        trueLabel: c.label,
+        verdict: verdictResult.verdict,
+        confidence: verdictResult.confidence,
+        reasoning: verdictResult.reasoning,
+      });
+
+      if (i < cases.length - 1) {
+        await sleep(EVAL_DELAY_MS);
+      }
     }
-
-    console.log(`verdict "${verdictResult.verdict}" (confidence ${verdictResult.confidence})`);
-
-    results.push({
-      case: c.name,
-      trueLabel: c.label,
-      verdict: verdictResult.verdict,
-      confidence: verdictResult.confidence,
-      reasoning: verdictResult.reasoning,
-    });
-
-    if (i < cases.length - 1) {
-      await sleep(EVAL_DELAY_MS);
+  } finally {
+    for (const relativePath of copiedFiles) {
+      const absolutePath = path.join(rootDir, 'server', relativePath.replace(/^\//, ''));
+      fs.rm(absolutePath, { force: true }, (error) => {
+        if (error) console.warn(`Could not remove temp eval upload ${relativePath}: ${error.message}`);
+      });
     }
   }
 

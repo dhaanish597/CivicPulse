@@ -7,8 +7,8 @@ const chatLocations = new Map();
 
 export async function startTelegramBot() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  if (!token) {
-    console.warn('Telegram bot disabled: TELEGRAM_BOT_TOKEN is not set.');
+  if (!token || process.env.NODE_ENV !== 'production') {
+    console.warn('Telegram bot disabled: local dev or TELEGRAM_BOT_TOKEN is not set.');
     return null;
   }
 
@@ -91,7 +91,13 @@ export async function startTelegramBot() {
     }
   });
 
-  await bot.launch();
+  bot.catch((err, ctx) => {
+    console.error(`Telegram bot error for ${ctx.updateType}:`, err);
+  });
+
+  bot.launch().catch(err => {
+    console.error('Telegram bot failed to launch:', err);
+  });
   console.log('Telegram bot polling started.');
 
   const stop = (signal) => {

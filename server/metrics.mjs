@@ -34,15 +34,30 @@ export function recordRunMetric({ agentStep, complaintId = null, model, duration
     console.warn(`run_metrics: NVIDIA response for agent_step="${agentStep}" had no usage data — prompt_tokens/completion_tokens/estimated_cost_usd left null for this row.`);
   }
 
-  insertRunMetric({
-    id: generateId('MET'),
-    complaintId,
-    agentStep,
-    durationMs,
-    promptTokens,
-    completionTokens,
-    estimatedCostUsd: (promptTokens !== null && completionTokens !== null)
-      ? estimateCostUsd(model, promptTokens, completionTokens)
-      : null,
-  });
+  // Task 6 hardening (flagged in HUMAN_CHECKLIST as a Task 5 deferred item):
+  // this used to call insertRunMetric() unguarded. recordRunMetric() runs
+  // synchronously inside callNvidia() (server/nvidia.mjs), BEFORE that
+  // function returns the real, already-successful NVIDIA response text to
+  // its caller — so a DB write failure here (a locked/full SQLite file,
+  // say) would throw out of callNvidia() and be indistinguishable from an
+  // actual NVIDIA call failure to every caller's catch block, needlessly
+  // triggering a rule-based fallback (or `inconclusive` for verification)
+  // even though the real model call succeeded. Metrics are instrumentation,
+  // never load-bearing for the product's actual behavior, so a failure here
+  // is logged and swallowed rather than allowed to affect the real response.
+  try {
+    insertRunMetric({
+      id: generateId('MET'),
+      complaintId,
+      agentStep,
+      durationMs,
+      promptTokens,
+      completionTokens,
+      estimatedCostUsd: (promptTokens !== null && completionTokens !== null)
+        ? estimateCostUsd(model, promptTokens, completionTokens)
+        : null,
+    });
+  } catch (error) {
+    console.warn(`run_metrics: failed to record a row for agent_step="${agentStep}" — metrics only, the real NVIDIA call this measured still succeeded. (${error.message})`);
+  }
 }

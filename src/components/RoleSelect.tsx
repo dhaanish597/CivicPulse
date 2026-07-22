@@ -41,6 +41,21 @@ export const RoleSelect: React.FC<RoleSelectProps> = ({ onSelect }) => {
         if (!isMounted || !data) return;
         setWardReference(data);
         if (data.source === 'ghmc_wards.json') {
+          // Task 6 investigation note (was flagged in HUMAN_CHECKLIST as a
+          // "cosmetic mismatch" — default circle isn't alphabetically first
+          // like the <select> options below): deliberately left as-is rather
+          // than sorted-then-[0]. This "first circle in ghmc_wards.json
+          // insertion order" is the exact same rule server/seed.mjs's
+          // pickHotspotCircle() uses to choose the one circle it concentrates
+          // extra seed volume into for the demo (currently "Kapra") — so this
+          // default isn't actually arbitrary, it quietly pre-selects the
+          // circle with real, interesting demo data instead of an alphabetically
+          // "correct" one that's very likely empty. Switching to sorted-first
+          // would trade that convenience for a purely cosmetic consistency
+          // win and require re-selecting the right circle by hand every time
+          // an Officer session is set up for the demo. Left alone on purpose;
+          // if `ghmc_wards.json`'s first entry ever changes, this and
+          // seed.mjs's hotspot will move together automatically.
           const firstCircle = [...new Set(data.wards.map((w) => w.circle))].filter(Boolean)[0];
           if (firstCircle) setSelectedCircle(firstCircle);
         }

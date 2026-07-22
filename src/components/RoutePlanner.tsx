@@ -44,11 +44,17 @@ export const RoutePlanner: React.FC = () => {
           destLng: dLoc.lng
         })
       });
-      if (!res.ok) throw new Error('Failed to fetch route');
+      if (!res.ok) throw new Error('Routing service unavailable. Please try again.');
       const data = await res.json();
       setResult(data);
-    } catch (e: any) {
-      setError(e.message || 'Routing service unavailable. Using fallback estimate.');
+    } catch {
+      // Task 6 fix: this previously rendered `e.message` verbatim, which for
+      // a plain network failure (offline, CORS, backend unreachable) is a
+      // raw browser string like "Failed to fetch" — never shown to the user
+      // per ROUND2.md §8 ("never render an error string where prose
+      // should be"). A fixed, honest message covers both the !res.ok case
+      // above and any network-level exception.
+      setError('Routing service unavailable right now. Please try again in a moment.');
     } finally {
       setLoading(false);
     }

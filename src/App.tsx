@@ -171,30 +171,47 @@ function AppShell() {
 
   return (
     <div className="min-h-screen bg-[#FAFBFB]">
+      {/*
+        Task 6 fix: this row used to be `items-center justify-between h-16`
+        with no wrap allowed. At mobile widths (~390px) the left block (logo +
+        "CivicPulse" + "AI Decision Intelligence" + DataSourceBadge) and the
+        right block (role label + "N complaints tracked" + Switch Role) don't
+        fit on one line — the text wrapped inside its own column but the
+        fixed h-16 height didn't grow to match, so the extra lines spilled
+        out of the header and visually overlapped whatever rendered directly
+        below it (confirmed live: on City Admin's cold-open screen, the
+        header text overlapped the "VERIFICATION INTEGRITY" hero stat).
+        Fixed two ways: (1) the row is now `flex-wrap` with `min-h` instead
+        of a fixed `h-16`, so if it ever does need two lines it grows instead
+        of clipping; (2) the purely decorative subtitle and the "complaints
+        tracked" counter (duplicated context — every screen already shows
+        this data) are hidden below the `sm` breakpoint so the common case
+        fits on one line again without wrapping at all.
+      */}
       <header className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
+          <div className="flex items-center justify-between flex-wrap gap-x-3 gap-y-1 min-h-16 py-2">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-brand-teal rounded-lg">
+              <div className="p-2 bg-brand-teal rounded-lg shrink-0">
                 <Building2 size={24} className="text-white" />
               </div>
               <div>
-                <h1 className="text-xl font-bold text-brand-navy">CivicPulse</h1>
-                <p className="text-xs text-gray-500">AI Decision Intelligence</p>
+                <h1 className="text-xl font-bold text-brand-navy leading-tight">CivicPulse</h1>
+                <p className="text-xs text-gray-500 hidden sm:block">AI Decision Intelligence</p>
               </div>
               <DataSourceBadge state={dataBadge} />
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3 sm:gap-4">
               <div className="text-right">
-                <p className="text-sm font-medium text-gray-700">
+                <p className="text-sm font-medium text-gray-700 leading-tight">
                   {roleLabel(roleSession)}
                 </p>
-                <p className="text-xs text-gray-500">{complaints.length} complaints tracked</p>
+                <p className="text-xs text-gray-500 hidden sm:block">{complaints.length} complaints tracked</p>
               </div>
               <button
                 type="button"
                 onClick={resetRole}
-                className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50"
+                className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 shrink-0"
               >
                 Switch Role
               </button>
@@ -228,7 +245,13 @@ function AppShell() {
               CivicPulse - Municipal Civic Operations Intelligence
             </div>
             <div className="flex items-center gap-6 text-sm text-gray-400">
-              <span>Wards: 20</span>
+              {/* Task 6 fix: was "Wards: 20", which reads as a citywide
+                  total and contradicts the real ~149 GHMC wards cited
+                  elsewhere in the app (ROUND2.md §1.1) — see the matching
+                  fix note in CityAdmin.tsx. This "20" is the legacy demo
+                  map's locality count, not a GHMC figure; relabelled to say
+                  so instead of removing context entirely. */}
+              <span>Demo map localities: 20</span>
               <span>Categories: 6</span>
               <span>Sources: 3</span>
             </div>

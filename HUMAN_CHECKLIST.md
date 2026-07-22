@@ -171,3 +171,137 @@ everything's resolved.
 - Evidence rows' `id` and stored filename use independently-generated
   suffixes (harmless, just slightly confusing if you're ever cross-referencing
   `server/uploads/` files against `evidence` table rows by eye).
+
+### Task 3 — deferred minor items (fix in Task 6's final pass, not blocking)
+
+- Step 1's instruction to invoke the `ui-ux-pro-max`/`frontend-design`
+  skills wasn't followed literally (the implementer read existing reference
+  components instead) — the resulting visual language is consistent with
+  the rest of the app regardless, so purely a process note, not a visible
+  defect.
+- Stale cached `citizen_proof` across multiple claim/dispute cycles: if a
+  complaint gets disputed and re-enters `resolution_claimed` a second time,
+  the citizen's "Confirm/Still not fixed" buttons can be pre-enabled from
+  a prior cycle's cached photo instead of prompting for a fresh one. The
+  backend still honestly re-adjudicates whatever photo is actually latest,
+  so this doesn't break the anti-gaming guarantee — it's a UX nudge gap,
+  not a security gap.
+- Minor import-style inconsistency (`getCachedEvidenceUrls` imported
+  directly in some files vs. via the shared barrel in others) and one
+  harmless redundant cache-write call. Cosmetic.
+- `inconclusive` verdicts don't force a fresh photo re-upload before
+  re-enabling the citizen's action buttons — same class of issue as the
+  stale-cache item above.
+
+### Task 4 — deferred minor items (fix in Task 6's final pass, not blocking)
+
+- `server/uploads/` is gitignored (Task 2 convention), so the two seeded demo
+  complaints' evidence photo thumbnails will show broken/missing images on a
+  completely fresh clone — status/verdict/reasoning text is still correct.
+  Worth deciding whether to commit a small set of sample upload images, or
+  just accept this and re-run the demo-flow-driven seeding step after any
+  fresh clone/deploy so real photos exist again.
+- CORS multi-origin logic was verified by reading the `cors` package's actual
+  source (twice, independently, by two different review passes) but has
+  **not** been tested against a real deployed Vercel domain, since none
+  exists yet in this environment. **Please verify this once you actually
+  deploy** — this is exactly the kind of thing that's cheap to check once
+  live and expensive to discover broken cold. This folds into the existing
+  "test the deployed link from your phone on mobile data" task below.
+- The 429 retry/backoff path (now exponential: 1s/2s/4s, 3 retries) was
+  verified by code read, not by deliberately forcing a live 429 — reasonable
+  given the LLM cache is now the primary defense against quota exhaustion,
+  but worth keeping in mind if you ever do see a 429 during a real demo.
+- **Real `/verify` calls can take over a minute end-to-end** (3 sequential
+  NVIDIA calls — 2 image descriptions + 1 text adjudication, a proven-necessary
+  deviation from Task 2's original 1-call design). The UI already shows a
+  "verifying…" loading state throughout, so nothing looks broken, but budget
+  for this pause when recording the demo video, and make sure the LLM cache
+  is pre-warmed along your exact demo path beforehand (already on your Day 5
+  checklist below) so the recorded run doesn't sit on a cold verification call.
+- `RoutePlanner.tsx` and `OfficerLeadsBoard.tsx` still have a pre-existing
+  (Task 2/3) pattern of surfacing a raw `e.message` string on a plain fetch
+  failure, the same class of bug fixed in `TrackMyReports.tsx`'s new demo
+  button during Task 4. Not touched (out of Task 4's scope) — worth a look
+  during Task 6's final pass.
+
+### Task 5 — deferred minor items (fix in Task 6's final pass, not blocking)
+
+- `recordRunMetric()` has no internal try/catch around its own DB write —
+  a metrics-table write failure would currently be indistinguishable from a
+  genuine NVIDIA call failure and could trigger a rule-based fallback (or
+  `inconclusive` for verification) even though the real LLM call actually
+  succeeded. Low risk (fails closed, doesn't corrupt data) but worth
+  hardening.
+- `evals/run_verification_eval.mjs` copies eval photos into
+  `server/uploads/` (gitignored) but never cleans them up after a run —
+  harmless but will accumulate stale files across repeated eval runs.
+- **Route advisory has no separately-measured token data** in the cost
+  model — assumed similar to the resolution-lead call shape (same model,
+  same token cap) rather than measured directly. Reasonable, but the
+  cost_model.md figure is worth re-deriving once real production-like
+  traffic exists.
+- **The `$21.17/month` (Rs.2,041/month) cost figure is based on a small
+  sample** (n=1-6 calls per step, captured during this session's own
+  testing — there's no real production traffic yet). The conclusion is
+  shown to be robust via a sensitivity table (stays in the Rs.2,000-2,700
+  range under every tested scenario), but re-run
+  `evals/results/cost_model.md`'s underlying `run_metrics` data collection
+  after more real usage if you want a tighter number for the deck.
+- **Environment note**: something in this environment appears to
+  auto-restart `npm run dev` processes against this exact repo without
+  being asked to (observed ~20 stray `node.exe` processes during Task 5's
+  testing) — this caused a transient, non-damaging DB read error during
+  testing. Not a code bug, but if you're doing your own direct file-level
+  operations on `server/civicpulse.db` (e.g. manually copying/restoring
+  it), check for and stop any stray `node server/index.mjs` /
+  `npm run dev` processes first to avoid the same symptom. **Confirmed
+  again during Task 6**: killing the dev server and immediately trying to
+  `git checkout` the DB files can fail with a Windows file-lock error
+  because a new instance has already respawned and reopened the file —
+  kill it a second time immediately before retrying.
+
+### Task 6 — final pass results (see `.superpowers/sdd/task-6-report.md` for the full walk)
+
+Fixed in this pass (all live-verified, see the report for evidence):
+- `recordRunMetric()` try/catch — done, exactly as described above.
+- `evals/run_verification_eval.mjs` stale upload cleanup — done (removes its
+  copied `EVAL-*` files in a `finally` block regardless of how the run ends).
+- **New, higher-severity defect found (not on this list before)**:
+  `OfficerLeadsBoard.tsx` rendered a card — and fired an independent
+  evidence fetch — for every open complaint in the officer's circle, with no
+  cap. At real seed volume this is ~2,480 cards for the seeded "Kapra"
+  hotspot circle (the exact circle the demo path uses), which produced
+  ~2,700 `ERR_INSUFFICIENT_RESOURCES` console errors and a very heavy DOM.
+  Fixed by capping to the top 25 by urgency with an honest "TOP 25 OF 2,480"
+  indicator. This was the single most demo-path-visible bug found.
+- Mobile header overlap (`App.tsx`) and `TabBar.tsx` horizontal page-scroll —
+  both confirmed live at 390px width and fixed; a judge on a phone would
+  have hit both on literally the first screen.
+- Stale `citizen_proof` across claim/dispute cycles, and `inconclusive` not
+  forcing a fresh photo — both fixed in `TrackMyReports.tsx`, and the stale-
+  cache one was reproduced and confirmed fixed live using a real 3-cycle
+  claim/dispute/reclaim sequence.
+- Raw `error.message` on network failure — fixed in `RoutePlanner.tsx`,
+  `OfficerLeadsBoard.tsx`, and (found during this pass, same class)
+  `TrackMyReports.tsx`'s upload/verify handlers.
+- Misleading "of 20 city wards" / "Wards: 20" copy (CityAdmin hero KPI +
+  footer) — reworded to not imply a citywide total that contradicts the
+  real ~149-ward GHMC figure elsewhere in the app. Underlying legacy-ward
+  data model left untouched (that decoupling is accepted, out of scope).
+
+Investigated and deliberately left unchanged:
+- `RoleSelect.tsx`'s default circle: confirmed it isn't a bug so much as an
+  accidental convenience — it defaults to whichever circle is first in
+  `ghmc_wards.json`, which is the same rule `seed.mjs` uses to pick the demo
+  hotspot. "Fixing" it to alphabetical-first would've meant re-selecting
+  "Kapra" by hand every time an Officer demo session is set up. Documented
+  in place instead of changed.
+
+Not achievable by this task (human-only, unblocked/documented instead):
+- H2 (uptime pinger) and the mobile-data prototype test — need a real
+  deployment + a real phone, exactly as ROUND2.md §10 already says.
+- Classification eval real numbers and the 20-pair verification eval — the
+  scripts are correct and were re-run live during this pass (both correctly
+  report "empty or missing" rather than crashing or fabricating a report);
+  the real data still depends on H3.
